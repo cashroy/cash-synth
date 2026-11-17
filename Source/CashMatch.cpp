@@ -388,7 +388,9 @@ void CashMatcher::search()
         for (int i = 0; i < ParameterMap::numParams; ++i)
         {
             const auto& s = ParameterMap::spec (i);
-            if (s.weight <= 0.0f)
+            // Skip what a single full-velocity note can't hear (glide, velocity -> cutoff).
+            if (s.weight <= 0.0f || juce::StringRef (s.id) == juce::StringRef (param::glideTime)
+                || juce::StringRef (s.id) == juce::StringRef (param::velToCutoff))
                 continue;
             const auto idx = static_cast<size_t> (i);
 

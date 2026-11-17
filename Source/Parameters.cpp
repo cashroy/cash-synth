@@ -6,6 +6,10 @@ juce::StringArray waveNames()   { return { "Sine", "Triangle", "Saw", "Square" }
 juce::StringArray filterNames() { return { "Low-pass", "Band-pass", "High-pass" }; }
 juce::StringArray driveNames()  { return { "Soft", "Hard", "Fold" }; }
 juce::StringArray lfoTargetNames() { return { "Cutoff", "Pitch", "Amp", "Drive", "Osc 2" }; }
+juce::StringArray voiceModeNames() { return { "Poly", "Mono", "Legato" }; }
+juce::StringArray glideModeNames() { return { "Always", "Legato" }; }
+juce::StringArray glideTypeNames() { return { "Time", "Rate" }; }
+juce::StringArray priorityNames()  { return { "Last", "Low", "High" }; }
 
 namespace
 {
@@ -115,6 +119,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     addFloat (l, lfo2Amount, "LFO 2 Amount", { 0.0f, 1.0f }, 0.0f, percent());
     l.add (std::make_unique<juce::AudioParameterChoice> (pid (lfo2Target), "LFO 2 Target", lfoTargetNames(), toCutoff));
     addFloat (l, pitchEnvAmt, "Pitch Env Amount", { -1.0f, 1.0f }, 0.0f, percent());
+
+    // M7 lead mode (append-only). Defaults = the M6 sound: poly, no glide, one voice, bend 2 st.
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (voiceMode), "Voice Mode", voiceModeNames(), poly));
+    addFloat (l, glideTime, "Glide Time", skewed (0.0f, 2.0f, 0.25f), 0.0f, seconds());
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (glideMode), "Glide Mode", glideModeNames(), glideAlways));
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (glideType), "Glide Type", glideTypeNames(), constantTime));
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (notePriority), "Note Priority", priorityNames(), lastNote));
+    l.add (std::make_unique<juce::AudioParameterInt> (pid (unisonVoices), "Unison Voices", 1, maxUnison, 1));
+    addFloat (l, unisonDetune, "Unison Detune", { 0.0f, 1.0f }, 0.25f, percent());
+    addFloat (l, unisonSpread, "Unison Spread", { 0.0f, 1.0f }, 0.5f, percent());
+    l.add (std::make_unique<juce::AudioParameterInt> (pid (bendRange), "Pitch Bend Range", 1, 24, 2,
+               juce::AudioParameterIntAttributes().withLabel ("st")));
+    addFloat (l, modVibrato, "Mod Wheel Vibrato", { 0.0f, 1.0f }, 0.5f, percent());
+    addFloat (l, velToCutoff, "Velocity to Cutoff", { 0.0f, 1.0f }, 0.0f, percent());
 
     return l;
 }

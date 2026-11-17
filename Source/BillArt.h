@@ -58,6 +58,7 @@ struct FrontLayout
     juce::Rectangle<float> leftZone, rightZone;
     juce::Rectangle<float> serialTop, serialBottom;
     juce::Rectangle<float> seal, sealCaption, motto, flip;
+    juce::Rectangle<float> voiceSwitch; // POLY / MONO / LEGATO (M7)
     std::array<juce::Point<float>, 4> corners; // TL, TR, BL, BR numeral medallions
     float cornerRadius;
 };

@@ -57,6 +57,20 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
         { lfo2Amount,  0, false, 0.6f },
         { lfo2Target,  5, false, 0.4f },
         { pitchEnvAmt, 0, false, 0.3f },
+
+        // M7 (CashCode v3): lead mode. How you play it is the player's (weight 0);
+        // glide and unison are part of the sound, so they move a little.
+        { voiceMode,    3,  false, 0.0f },
+        { glideTime,    0,  false, 0.3f },
+        { glideMode,    2,  false, 0.0f },
+        { glideType,    2,  false, 0.0f },
+        { notePriority, 3,  false, 0.0f },
+        { unisonVoices, 8,  true,  0.3f },
+        { unisonDetune, 0,  false, 0.4f },
+        { unisonSpread, 0,  false, 0.3f },
+        { bendRange,    24, true,  0.0f },
+        { modVibrato,   0,  false, 0.0f },
+        { velToCutoff,  0,  false, 0.3f },
     } };
     return table;
 }

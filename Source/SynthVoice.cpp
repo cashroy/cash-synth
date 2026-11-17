@@ -100,33 +100,57 @@ float CashVoice::Svf::process (float v0, int mode)
     }
 }
 
-void CashVoice::setCurrentPlaybackSampleRate (double newRate)
+void CashVoice::setSampleRate (double newRate)
 {
-    SynthesiserVoice::setCurrentPlaybackSampleRate (newRate);
-    if (newRate > 0.0)
-    {
-        ampEnv.setSampleRate (newRate);
-        filterEnv.setSampleRate (newRate);
-        cutoff.reset (newRate, 0.02);
-    }
+    if (newRate <= 0.0)
+        return;
+    sampleRate = newRate;
+    ampEnv.setSampleRate (newRate);
+    filterEnv.setSampleRate (newRate);
+    cutoff.reset (newRate, 0.02);
 }
 
-void CashVoice::startNote (int midiNote, float velocity, juce::SynthesiserSound*, int pitchWheel)
+void CashVoice::resetPhases (double offset)
 {
-    const bool wasIdle = ! ampEnv.isActive();
-    note = midiNote;
-    bendSemis = bendToSemis (pitchWheel);
+    phase1 = phase2 = phaseSub = offset - std::floor (offset);
+}
 
+void CashVoice::setUnison (float detuneSemis, float newPan, float gain)
+{
+    detune = detuneSemis;
+    pan = juce::jlimit (-1.0f, 1.0f, newPan);
+    unisonGain = gain;
+}
+
+void CashVoice::play (int midiNote, float vel, bool retrigger, float fromPitch, Glide glide)
+{
     const auto& p = ctx.params;
-    velGain = 1.0f - p.velocitySens + p.velocitySens * velocity;
+    note = midiNote;
+    target = static_cast<float> (midiNote);
 
-    if (wasIdle)
+    const bool glides = fromPitch >= 0.0f && glide.seconds > 0.0f;
+    pitch = glides ? fromPitch : target;
+    if (glides)
+    {
+        const float samples = static_cast<float> (glide.seconds * sampleRate);
+        const float distance = glide.constantRate ? 12.0f : std::abs (target - pitch);
+        glideStep = distance / juce::jmax (1.0f, samples);
+    }
+
+    if (! retrigger && active)
+        return; // legato: envelopes carry on, only the pitch moves
+
+    velocity = vel;
+    velGain = 1.0f - p.velocitySens + p.velocitySens * vel;
+
+    if (! active)
     {
         filter.reset();
         cutoff.setCurrentAndTargetValue (p.cutoffHz);
         phaseSub = phase1; // keep the sub locked to osc 1 at note start
     }
 
+    active = true;
     ampEnv.setParameters (p.ampEnv);
     filterEnv.setParameters (p.filterEnv);
     ampEnv.noteOn();      // JUCE's ADSR restarts from its current level, so steals don't click
@@ -134,63 +158,64 @@ void CashVoice::startNote (int midiNote, float velocity, juce::SynthesiserSound*
     filterCountdown = 0;
 }
 
-void CashVoice::stopNote (float, bool allowTailOff)
+void CashVoice::release()
 {
-    if (allowTailOff)
-    {
-        ampEnv.noteOff();
-        filterEnv.noteOff();
-    }
-    else
-    {
-        ampEnv.reset();
-        filterEnv.reset();
-        clearCurrentNote();
-    }
+    keyDown = sustained = false;
+    ampEnv.noteOff();
+    filterEnv.noteOff();
 }
 
-void CashVoice::pitchWheelMoved (int newValue)
+void CashVoice::kill()
 {
-    bendSemis = bendToSemis (newValue);
+    keyDown = sustained = false;
+    ampEnv.reset();
+    filterEnv.reset();
+    active = false;
 }
 
-void CashVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample, int numSamples)
+void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numSamples)
 {
-    if (! isVoiceActive())
+    if (! active)
         return;
 
     const auto& p = ctx.params;
-    const double sr = getSampleRate();
+    const double sr = sampleRate;
     const float nyquistSafe = static_cast<float> (sr * 0.45);
     const float q = 0.5f + p.resonance * p.resonance * 14.5f;
-    const float keySemis = p.keyTrack * static_cast<float> (note - 60);
+    const float velSemis = p.velCutoffSemis * (velocity - 1.0f);
 
     ampEnv.setParameters (p.ampEnv);
     filterEnv.setParameters (p.filterEnv);
     cutoff.setTargetValue (p.cutoffHz);
 
-    const double baseInc = juce::MidiMessage::getMidiNoteInHertz (note) / sr;
-    const double inc1 = baseInc * semisToRatio (p.osc1Semis);
-    const double inc2 = baseInc * semisToRatio (p.osc2Semis);
-    const double incSub = baseInc * 0.5;
+    const double hzPerSemitoneBase = 440.0 / sr; // A4 = 69
+    const double ratio1 = semisToRatio (p.osc1Semis), ratio2 = semisToRatio (p.osc2Semis);
+    const float fixedSemis = detune + ctx.bend * p.bendRange - 69.0f;
+    const float vibrato = p.lfoToPitch + ctx.modWheel * p.modVibratoSemis;
 
+    // Stereo: centre = 1/1 (same as mono), hard side = 0/2, so a mono sum never changes.
     const int numChannels = out.getNumChannels();
-    const float* lfo = ctx.lfo + (startSample - ctx.lfoBase);
+    const float gainL = numChannels > 1 ? 1.0f - pan : 1.0f;
+    const float gainR = numChannels > 1 ? 1.0f + pan : 1.0f;
 
+    const float* lfo = ctx.lfo + (startSample - ctx.lfoBase);
     const float* lfo2 = ctx.lfo2 != nullptr ? ctx.lfo2 + (startSample - ctx.lfoBase) : nullptr;
     const float mod2 = lfo2 != nullptr ? p.lfo2Amount : 0.0f;
-    auto routed = [&] (int target, float v) { return p.lfo2Target == target ? v * mod2 : 0.0f; };
+    auto routed = [&] (int target_, float v) { return p.lfo2Target == target_ ? v * mod2 : 0.0f; };
 
     for (int i = 0; i < numSamples; ++i)
     {
+        if (pitch != target)
+            pitch = pitch < target ? juce::jmin (target, pitch + glideStep) : juce::jmax (target, pitch - glideStep);
+
         const float lfoValue = lfo[i];
         const float lfo2Value = lfo2 != nullptr ? lfo2[i] : 0.0f;
         const float fEnv = filterEnv.getNextSample();
 
-        const float pitchMod = lfoValue * p.lfoToPitch + fEnv * p.pitchEnvSemis
+        const float pitchMod = lfoValue * vibrato + fEnv * p.pitchEnvSemis
                              + routed (param2::toPitch, lfo2Value) * mod2 * 12.0f; // amount^2 * 12 st
-        const double ratio = semisToRatio (bendSemis + pitchMod);
-        const double d1 = inc1 * ratio, d2 = inc2 * ratio, dSub = incSub * ratio;
+        const double base = hzPerSemitoneBase * semisToRatio (pitch + fixedSemis + pitchMod);
+        const double d1 = base * ratio1, d2 = base * ratio2, dSub = base * 0.5;
 
         const float osc2Level = p.osc2Level * juce::jmax (0.0f, 1.0f + routed (param2::toOsc2, lfo2Value));
 
@@ -207,8 +232,8 @@ void CashVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample,
         const float baseCutoff = cutoff.getNextValue();
         if (--filterCountdown <= 0)
         {
-            const float semis = p.filterEnvAmt * fEnv * envCutoffRange + keySemis + lfoValue * p.lfoToCutoff * lfoCutoffRange
-                              + routed (param2::toCutoff, lfo2Value) * lfoCutoffRange;
+            const float semis = p.filterEnvAmt * fEnv * envCutoffRange + p.keyTrack * (pitch - 60.0f) + velSemis
+                              + lfoValue * p.lfoToCutoff * lfoCutoffRange + routed (param2::toCutoff, lfo2Value) * lfoCutoffRange;
             const float hz = juce::jlimit (20.0f, nyquistSafe, baseCutoff * static_cast<float> (semisToRatio (semis)));
             filter.setup (hz, q, sr);
             filterCountdown = filterUpdateInterval;
@@ -221,14 +246,17 @@ void CashVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample,
         y = shape (p.driveType, y, drive);
 
         const float tremolo = 1.0f - 0.5f * mod2 * (p.lfo2Target == param2::toAmp ? 1.0f - lfo2Value : 0.0f);
-        y *= ampEnv.getNextSample() * velGain * voiceGain * tremolo;
+        y *= ampEnv.getNextSample() * velGain * voiceGain * unisonGain * tremolo;
 
-        for (int ch = 0; ch < numChannels; ++ch)
-            out.addSample (ch, startSample + i, y);
+        const int at = startSample + i;
+        if (numChannels > 0) out.addSample (0, at, y * gainL);
+        if (numChannels > 1) out.addSample (1, at, y * gainR);
+        for (int ch = 2; ch < numChannels; ++ch)
+            out.addSample (ch, at, y);
 
         if (! ampEnv.isActive())
         {
-            clearCurrentNote();
+            kill();
             break;
         }
     }

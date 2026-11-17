@@ -55,17 +55,42 @@ namespace cash::param
     inline constexpr const char* lfo2Target  = "lfo2Target";
     inline constexpr const char* pitchEnvAmt = "pitchEnvAmt";  // filter env -> pitch, +/- 24 st
 
+    // M7: lead mode. Appended (CashCode v3).
+    inline constexpr const char* voiceMode     = "voiceMode";     // Poly / Mono / Legato
+    inline constexpr const char* glideTime     = "glideTime";     // 0..2 s
+    inline constexpr const char* glideMode     = "glideMode";     // Always / Legato only
+    inline constexpr const char* glideType     = "glideType";     // constant time / constant rate (time per octave)
+    inline constexpr const char* notePriority  = "notePriority";  // Last / Low / High (mono)
+    inline constexpr const char* unisonVoices  = "unisonVoices";  // 1..8
+    inline constexpr const char* unisonDetune  = "unisonDetune";  // 0..1 = 0..100 ct total spread
+    inline constexpr const char* unisonSpread  = "unisonSpread";  // stereo width 0..1
+    inline constexpr const char* bendRange     = "bendRange";     // 1..24 st
+    inline constexpr const char* modVibrato    = "modVibrato";    // mod wheel -> LFO 1 pitch depth
+    inline constexpr const char* velToCutoff   = "velToCutoff";   // velocity -> cutoff amount
+
     enum Wave { sine = 0, triangle, saw, square };
     enum FilterMode { lowPass = 0, bandPass, highPass };
     enum DriveType { softClip = 0, hardClip, fold };
     enum LfoTarget { toCutoff = 0, toPitch, toAmp, toDrive, toOsc2 };
+    enum VoiceMode { poly = 0, mono, legato };
+    enum GlideMode { glideAlways = 0, glideLegato };
+    enum GlideType { constantTime = 0, constantRate };
+    enum NotePriority { lastNote = 0, lowNote, highNote };
 
-    inline constexpr float pitchEnvRange = 24.0f; // semitones at 100 %
+    inline constexpr float pitchEnvRange = 24.0f;      // semitones at 100 %
+    inline constexpr float unisonDetuneRange = 1.0f;   // semitones between the outer unison voices at 100 %
+    inline constexpr float modVibratoRange = 1.0f;     // semitones of LFO 1 vibrato at full wheel, 100 %
+    inline constexpr float velCutoffRange = 48.0f;     // semitones darker for the softest note at 100 %
+    inline constexpr int maxUnison = 8;
 
     juce::StringArray waveNames();
     juce::StringArray filterNames();
     juce::StringArray driveNames();
     juce::StringArray lfoTargetNames();
+    juce::StringArray voiceModeNames();
+    juce::StringArray glideModeNames();
+    juce::StringArray glideTypeNames();
+    juce::StringArray priorityNames();
 
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 }

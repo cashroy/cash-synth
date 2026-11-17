@@ -28,6 +28,11 @@ struct SynthParams
     int   lfo2Target = 0;         // param::LfoTarget
     float lfo2Amount = 0.0f;      // 0..1
     float pitchEnvSemis = 0.0f;   // filter env -> pitch, semitones at full env
+
+    // M7
+    float bendRange = 2.0f;       // semitones at full wheel
+    float modVibratoSemis = 0.0f; // LFO 1 pitch depth added at full mod wheel
+    float velCutoffSemis = 0.0f;  // cutoff drop for velocity 0 (scaled by 1 - velocity)
 };
 
 struct VoiceContext
@@ -36,28 +41,48 @@ struct VoiceContext
     const float* lfo = nullptr;  // one LFO 1 value per sample of the current chunk
     const float* lfo2 = nullptr; // same for LFO 2
     int lfoBase = 0;             // buffer sample index that lfo[0] corresponds to
+    float bend = 0.0f;           // pitch wheel, -1..1 (shared by every voice)
+    float modWheel = 0.0f;       // CC 1, 0..1
 };
 
-class CashSound final : public juce::SynthesiserSound
-{
-public:
-    bool appliesToNote (int) override { return true; }
-    bool appliesToChannel (int) override { return true; }
-};
-
-class CashVoice final : public juce::SynthesiserVoice
+// One voice. Owned and allocated by SynthEngine (no juce::Synthesiser: it has
+// no mono mode, and a gliding mono voice changes note while it plays).
+class CashVoice final
 {
 public:
     explicit CashVoice (const VoiceContext& context) : ctx (context) {}
 
-    bool canPlaySound (juce::SynthesiserSound* s) override { return dynamic_cast<CashSound*> (s) != nullptr; }
-    void startNote (int midiNote, float velocity, juce::SynthesiserSound*, int pitchWheel) override;
-    void stopNote (float velocity, bool allowTailOff) override;
-    void pitchWheelMoved (int newValue) override;
-    void controllerMoved (int, int) override {}
-    void renderNextBlock (juce::AudioBuffer<float>&, int startSample, int numSamples) override;
-    void setCurrentPlaybackSampleRate (double newRate) override;
-    void resetPhases() { phase1 = phase2 = phaseSub = 0.0; } // engine reset only (free-running otherwise)
+    struct Glide
+    {
+        float seconds = 0.0f;
+        bool constantRate = false; // true: `seconds` per octave; false: `seconds` for any interval
+    };
+
+    void setSampleRate (double newRate);
+
+    // Starts the note (envelopes from their current level, so steals don't click),
+    // or with retrigger = false just moves the pitch (legato). `fromPitch` >= 0
+    // glides from that pitch (MIDI note number, fractional allowed).
+    void play (int midiNote, float velocity, bool retrigger, float fromPitch, Glide);
+    void release();
+    void kill();
+    bool isActive() const { return active; }
+
+    // Unison place: detune offset in semitones, pan -1..1, and a level scale.
+    void setUnison (float detuneSemis, float pan, float gain);
+
+    void render (juce::AudioBuffer<float>&, int startSample, int numSamples);
+    void resetPhases (double offset); // engine reset only (oscillators free-run otherwise)
+
+    int getNote() const { return note; }
+    float getPitch() const { return pitch; }
+    float getPan() const { return pan; }
+
+    // Engine bookkeeping.
+    bool keyDown = false, sustained = false;
+    uint64_t age = 0;
+
+    static float shape (int driveType, float x, float drive); // the drive stage (also used by tests)
 
 private:
     struct Svf
@@ -69,20 +94,20 @@ private:
     };
 
     static float oscillator (int wave, double phase, double inc);
-public:
-    static float shape (int driveType, float x, float drive); // the drive stage (also used by tests)
-private:
-    static float bendToSemis (int wheel) { return (static_cast<float> (wheel) - 8192.0f) / 8192.0f * 2.0f; }
 
     const VoiceContext& ctx;
+    double sampleRate = 44100.0;
     juce::ADSR ampEnv, filterEnv;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> cutoff { 4000.0f };
     Svf filter;
     juce::Random noise;
 
     double phase1 = 0.0, phase2 = 0.0, phaseSub = 0.0;
+    bool active = false;
     int note = 60;
-    float velGain = 1.0f, bendSemis = 0.0f;
+    float velocity = 1.0f, velGain = 1.0f;
+    float pitch = 60.0f, target = 60.0f, glideStep = 0.0f; // semitones (MIDI note), per sample
+    float detune = 0.0f, pan = 0.0f, unisonGain = 1.0f;
     int filterCountdown = 0;
 };
 }

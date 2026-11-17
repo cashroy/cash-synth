@@ -252,7 +252,23 @@ void CashSynthAudioProcessor::setStateInformation (const void* data, int sizeInB
     if (! params.isValid())
         return; // not ours: leave everything as it is
 
-    state.replaceState (params.createCopy());
+    // Older projects lack newer params. APVTS would leave those at their current
+    // value, so add them at their defaults: an M6 project loads as M6 sounded.
+    auto filled = params.createCopy();
+    for (int i = 0; i < cash::ParameterMap::numParams; ++i)
+    {
+        const auto* id = cash::ParameterMap::spec (i).id;
+        if (filled.getChildWithProperty ("id", id).isValid())
+            continue;
+        if (auto* p = state.getParameter (id))
+        {
+            juce::ValueTree child ("PARAM");
+            child.setProperty ("id", id, nullptr);
+            child.setProperty ("value", p->convertFrom0to1 (p->getDefaultValue()), nullptr);
+            filled.appendChild (child, nullptr);
+        }
+    }
+    state.replaceState (filled);
 
     if (root.hasType (stateType))
     {

@@ -2,6 +2,7 @@
 #include "CashCode.h"
 #include "CashLookAndFeel.h"
 #include "PluginProcessor.h"
+#include "Parameters.h"
 
 namespace cash
 {
@@ -232,9 +233,97 @@ void FlipButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
     g.drawText (getButtonText(), r.withTrimmedLeft (r.getHeight() * 1.1f).withTrimmedRight (6.0f), juce::Justification::centred, false);
 }
 
-//============================================================================== BillFront
-BillFront::BillFront (CashSynthAudioProcessor& p) : processor (p), portrait (p.getScope())
+//============================================================================== VoiceModeSwitch
+namespace
 {
+    constexpr float captionHeight = 15.0f;
+}
+
+VoiceModeSwitch::VoiceModeSwitch (juce::RangedAudioParameter& param)
+    : attachment (param, [this] (float v) { mode = juce::roundToInt (v); repaint(); })
+{
+    setTooltip ("Voice mode. Poly: chords. Mono: one note, envelopes restart on every key. "
+                "Legato: one note, envelopes keep going while keys overlap.");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    attachment.sendInitialUpdate();
+}
+
+juce::Rectangle<float> VoiceModeSwitch::segment (int index) const
+{
+    auto r = getLocalBounds().toFloat().withTrimmedTop (captionHeight).reduced (2.0f);
+    const float w = r.getWidth() / 3.0f;
+    return r.withX (r.getX() + w * static_cast<float> (index)).withWidth (w);
+}
+
+int VoiceModeSwitch::segmentAt (juce::Point<float> p) const
+{
+    for (int i = 0; i < 3; ++i)
+        if (segment (i).contains (p))
+            return i;
+    return -1;
+}
+
+void VoiceModeSwitch::choose (int newMode)
+{
+    if (newMode >= 0 && newMode < 3 && newMode != mode)
+        attachment.setValueAsCompleteGesture (static_cast<float> (newMode));
+}
+
+void VoiceModeSwitch::mouseDown (const juce::MouseEvent& e) { choose (segmentAt (e.position)); }
+void VoiceModeSwitch::mouseMove (const juce::MouseEvent& e) { const int h = segmentAt (e.position); if (h != hover) { hover = h; repaint(); } }
+void VoiceModeSwitch::mouseExit (const juce::MouseEvent&) { hover = -1; repaint(); }
+
+void VoiceModeSwitch::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    const auto all = getLocalBounds().toFloat();
+
+    // Paper plate so the scan underneath doesn't fight the switch.
+    g.setColour (paper.withAlpha (0.82f));
+    g.fillRoundedRectangle (all, 6.0f);
+
+    g.setColour (inkSoft);
+    g.setFont (art::serif (10.0f, true, 0.25f));
+    g.drawText ("VOICE", all.withHeight (captionHeight).translated (0.0f, 1.0f), juce::Justification::centred);
+
+    const auto body = segment (0).getUnion (segment (2));
+    g.setColour (paperShade);
+    g.fillRoundedRectangle (body, 4.0f);
+
+    const auto names = param::voiceModeNames();
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto r = segment (i);
+        const bool on = i == mode;
+        if (on)
+        {
+            g.setColour (sealGreen);
+            g.fillRoundedRectangle (r.reduced (1.5f), 3.0f);
+        }
+        else if (i == hover)
+        {
+            g.setColour (ink.withAlpha (0.08f));
+            g.fillRoundedRectangle (r.reduced (1.5f), 3.0f);
+        }
+        if (i > 0)
+        {
+            g.setColour (ink.withAlpha (0.4f));
+            g.drawVerticalLine (juce::roundToInt (r.getX()), r.getY() + 5.0f, r.getBottom() - 5.0f);
+        }
+        g.setColour (on ? paper : ink);
+        g.setFont (art::serif (12.0f, true, 0.12f));
+        g.drawText (names[i].toUpperCase(), r, juce::Justification::centred, false);
+    }
+
+    g.setColour (ink);
+    g.drawRoundedRectangle (body, 4.0f, 1.2f);
+}
+
+//============================================================================== BillFront
+BillFront::BillFront (CashSynthAudioProcessor& p)
+    : processor (p), portrait (p.getScope()), voiceSwitch (*p.getState().getParameter (param::voiceMode))
+{
+    addAndMakeVisible (voiceSwitch);
     addAndMakeVisible (portrait);
     addAndMakeVisible (seal);
     addAndMakeVisible (serialTop);
@@ -278,6 +367,7 @@ void BillFront::resized()
     serialTop.setBounds (L.serialTop.toNearestInt());
     serialBottom.setBounds (L.serialBottom.toNearestInt());
     flip.setBounds (L.flip.toNearestInt());
+    voiceSwitch.setBounds (L.voiceSwitch.toNearestInt());
 }
 
 //============================================================================== BillBack
@@ -295,10 +385,10 @@ void BillBack::paint (juce::Graphics& g)
 
 void BillBack::resized()
 {
-    auto inner = getLocalBounds().reduced (20);
+    auto inner = getLocalBounds().reduced (20, 18);
     auto titleRow = inner.removeFromTop (24);
     flip.setBounds (titleRow.removeFromRight (150).reduced (0, 1));
-    inner.removeFromTop (6);
+    inner.removeFromTop (4);
     advanced.setBounds (inner);
 }
 }

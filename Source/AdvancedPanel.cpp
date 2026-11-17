@@ -6,10 +6,11 @@ namespace cash
 {
 namespace
 {
-    constexpr int sectionGap = 10;
-    constexpr int titleHeight = 22;
-    constexpr int labelHeight = 16;
-    constexpr int textBoxHeight = 18;
+    constexpr int sectionGap = 10;  // between sections in a row
+    constexpr int rowGap = 6;       // between rows (four rows since M7)
+    constexpr int titleHeight = 18;
+    constexpr int labelHeight = 14;
+    constexpr int textBoxHeight = 16;
 }
 
 AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
@@ -29,6 +30,11 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
     addSection (2, "AMP ENV", { { ampAttack, "Attack" }, { ampDecay, "Decay" }, { ampSustain, "Sustain" }, { ampRelease, "Release" } });
     addSection (2, "LFO 1", { { lfoWave, "Wave" }, { lfoRate, "Rate" }, { lfoToPitch, "Pitch" }, { lfoToCutoff, "Cutoff" } });
     addSection (2, "LFO 2", { { lfo2Wave, "Wave" }, { lfo2Rate, "Rate" }, { lfo2Amount, "Amount" }, { lfo2Target, "Target" } });
+
+    addSection (3, "VOICE", { { voiceMode, "Mode" }, { notePriority, "Priority" }, { unisonVoices, "Unison" },
+                              { unisonDetune, "Detune" }, { unisonSpread, "Spread" } });
+    addSection (3, "GLIDE", { { glideTime, "Time" }, { glideMode, "When" }, { glideType, "Type" } });
+    addSection (3, "PLAY", { { bendRange, "Bend" }, { modVibrato, "Mod Vib" }, { velToCutoff, "Vel > Cut" } });
 }
 
 AdvancedPanel::~AdvancedPanel() = default;
@@ -64,6 +70,10 @@ void AdvancedPanel::addSection (int row, const juce::String& title, std::initial
             c->slider = std::make_unique<juce::Slider> (juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow);
             c->slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, textBoxHeight);
             c->slider->setPopupDisplayEnabled (false, false, nullptr);
+            // Set here, not only in the look-and-feel: a value box whose size never changes
+            // in resized() is never rebuilt, and would keep the default LAF's outline.
+            c->slider->setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+            c->slider->setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
             c->slider->setTooltip (p->getName (64));
             addAndMakeVisible (*c->slider);
             c->sliderAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, *c->slider);
@@ -93,7 +103,7 @@ void AdvancedPanel::paint (juce::Graphics& g)
 
             g.setColour (colours::gold);
             g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawText (s.title, s.bounds.withHeight (titleHeight).reduced (10, 0), juce::Justification::centredLeft);
+            g.drawText (s.title, s.bounds.withHeight (titleHeight + 2).reduced (10, 0), juce::Justification::centredLeft);
         }
     }
 }
@@ -105,12 +115,12 @@ void AdvancedPanel::resized()
     if (numRows == 0)
         return;
 
-    const int rowHeight = (area.getHeight() - sectionGap * (numRows - 1)) / numRows;
+    const int rowHeight = (area.getHeight() - rowGap * (numRows - 1)) / numRows;
 
     for (auto& row : rows)
     {
         auto rowArea = area.removeFromTop (rowHeight);
-        area.removeFromTop (sectionGap);
+        area.removeFromTop (rowGap);
 
         int units = 0;
         for (const auto& s : row)
@@ -129,7 +139,7 @@ void AdvancedPanel::resized()
 
             auto inner = s.bounds.reduced (4, 0);
             inner.removeFromTop (titleHeight);
-            inner.removeFromBottom (6);
+            inner.removeFromBottom (2);
             const int cw = inner.getWidth() / juce::jmax (1, static_cast<int> (s.controls.size()));
 
             for (auto* c : s.controls)

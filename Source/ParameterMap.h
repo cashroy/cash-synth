@@ -19,8 +19,9 @@ struct ParamSpec
 class ParameterMap
 {
 public:
-    static constexpr int numParams = 39;
+    static constexpr int numParams = 50;
     static constexpr int numParamsV1 = 31; // CashCode v1 carried only the first 31
+    static constexpr int numParamsV2 = 39; // v2 (M6) the first 39
 
     static const std::array<ParamSpec, numParams>& specs();
     static const ParamSpec& spec (int index) { return specs()[static_cast<size_t> (index)]; }

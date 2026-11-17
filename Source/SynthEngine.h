@@ -5,8 +5,9 @@
 
 namespace cash
 {
-// Polyphonic subtractive engine: reads the APVTS once per block, runs a global
-// LFO, and renders voices through juce::Synthesiser.
+// Subtractive engine: reads the APVTS once per block, runs the global LFOs and
+// owns its 16 voices. Poly (with unison), or Mono / Legato with a held-note stack,
+// note priority and glide. MIDI is omni.
 class SynthEngine
 {
 public:
@@ -23,9 +24,33 @@ public:
     void render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi);
 
     int getNumActiveVoices() const;
+    int getMonoNote() const { return monoGate ? monoNote : -1; } // sounding mono note, -1 if none
+    float getVoicePitch (int index) const { return voices[static_cast<size_t> (index)]->getPitch(); }
+    float getVoicePan (int index) const { return voices[static_cast<size_t> (index)]->getPan(); }
+    bool isVoiceActive (int index) const { return voices[static_cast<size_t> (index)]->isActive(); }
 
 private:
     void readParameters();
+    void handleMidi (const juce::MidiMessage&);
+    void renderVoices (juce::AudioBuffer<float>&, int start, int num);
+
+    void noteOn (int note, float velocity);
+    void noteOff (int note);
+    void setSustain (bool down);
+    void releaseAll();
+    void killAll();
+
+    // Poly
+    CashVoice* allocate (uint64_t notBefore);
+    // Mono / Legato
+    struct Held { int note; float velocity; };
+    const Held* priorityNote() const;
+    void monoPlay (const Held&, bool legatoContext);
+    void releaseMono();
+
+    CashVoice::Glide glide() const;
+    int unisonCount() const;
+    void placeUnison (CashVoice&, int index, int count) const;
 
     struct Lfo
     {
@@ -50,9 +75,22 @@ private:
     Raw lfoWave, lfoRate, lfoToPitch, lfoToCutoff;
     Raw velocitySens, masterGain;
     Raw driveType, driveAmount, lfoToDrive, lfo2Wave, lfo2Rate, lfo2Amount, lfo2Target, pitchEnvAmt;
+    Raw voiceMode, glideTime, glideMode, glideType, notePriority, unisonVoices, unisonDetune, unisonSpread;
+    Raw bendRange, modVibrato, velToCutoff;
 
-    juce::Synthesiser synth;
+    std::vector<std::unique_ptr<CashVoice>> voices;
     VoiceContext ctx;
+
+    int mode = 0, priority = 0, unison = 1, glideModeNow = 0;
+    float glideSeconds = 0.0f, detuneAmount = 0.0f, spreadAmount = 0.0f;
+    bool glideByRate = false;
+
+    std::vector<Held> held;      // keys down, in press order (reserved: no allocation on the audio thread)
+    bool sustainDown = false;
+    int monoNote = -1;           // the note the mono voices are on
+    bool monoGate = false;       // mono voices are sounding (key or pedal holds them)
+    float lastPitch = -1.0f;     // last note played, for glide (-1 = none yet)
+    uint64_t clock = 0;          // voice age stamps
     std::vector<float> lfoBuffer, lfo2Buffer;
     double sampleRate = 44100.0;
     Lfo lfo1, lfo2;

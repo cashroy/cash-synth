@@ -136,6 +136,21 @@ Patch Mutator::jackpot (const Patch& base, uint64_t seed, const LockMask& locks)
             out[i] = 0.5f + (out[i] - 0.5f) * 0.2f;
     }
 
+    // Lead settings stay mostly off on a re-roll: a jackpot is a new sound, not
+    // sluggish glide or an 8-voice stack on every note. Same draws whatever is locked.
+    {
+        Rng lead (seed ^ 0x4C454144ull);
+        const bool glideOn = lead.chance (0.25f);
+        const float glide = lead.uniform() * 0.35f;      // normalised: up to ~90 ms
+        const bool stack = lead.chance (0.3f);
+        const int voices = 1 + lead.below (3);            // 2..4 voices
+        const auto g = at (param::glideTime), u = at (param::unisonVoices);
+        if (! locks.test (g))
+            out[g] = glideOn ? glide : 0.0f;
+        if (! locks.test (u))
+            out[u] = ParameterMap::fromStep (ParameterMap::spec (static_cast<int> (u)), stack ? voices : 0);
+    }
+
     makePlayable (out, locks);
     return out;
 }

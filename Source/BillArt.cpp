@@ -271,6 +271,8 @@ FrontLayout::FrontLayout (juce::Rectangle<float> b) : bill (b)
     sealCaption = rightZone.withY (seal.getBottom() + 2.0f).withHeight (16.0f);
     serialBottom = juce::Rectangle<float>::leftTopRightBottom (ribbon.getRight() + 24.0f, inner.getBottom() - 74.0f, rightZone.getRight(), inner.getBottom() - 46.0f);
     flip = juce::Rectangle<float> (156.0f, 24.0f).withPosition (rightZone.getRight() - 156.0f, inner.getBottom() - 38.0f);
+    // Under the legal-tender text (serialTop + 8 + 30 high), centred in the left zone.
+    voiceSwitch = juce::Rectangle<float> (228.0f, 48.0f).withCentre ({ leftZone.getCentreX(), serialTop.getBottom() + 38.0f + 22.0f + 24.0f });
 }
 
 namespace
@@ -542,7 +544,7 @@ void paintBack (juce::Graphics& g, juce::Rectangle<float> b)
     paintPaperTexture (g, b.reduced (8.0f), gold.withAlpha (0.035f), 3.0f);
     paintFrame (g, b, 6.0f, 12.0f, background, goldDim.withAlpha (0.8f), goldDim);
 
-    const auto titleRow = b.reduced (20.0f).withHeight (24.0f);
+    const auto titleRow = b.reduced (20.0f, 18.0f).withHeight (24.0f);
     drawCentred (g, "THE UNITED STATES OF CASHROY  -  ADVANCED CONTROLS", titleRow, serif (15.0f, true, 0.12f), gold);
 }
 }

@@ -63,8 +63,8 @@ size_t idx (const char* id)
     return static_cast<size_t> (i);
 }
 
-// v2 (M6). The v1 code ("$34S0-...-5HGF-35R") is checked for back-compat in MatchTests.
-const juce::String goldenCode = "$54S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0GBB";
+// v3 (M7). The v1 and v2 codes are checked for back-compat in MatchTests / LeadTests.
+const juce::String goldenCode = "$74S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-0000-T310";
 constexpr float continuousTolerance = 0.5f / 255.0f + 1.0e-6f;
 }
 
@@ -165,7 +165,7 @@ TEST_CASE ("CashCode format is pinned", "[cashcode]")
     Plugin pl;
     const auto code = cash::CashCode::encode (cash::defaultPatch (pl.p.getState()));
     CHECK (code.startsWithChar ('$'));
-    CHECK (code.removeCharacters ("$-").length() == 56);
+    CHECK (code.removeCharacters ("$-").length() == 68);
     CHECK (code == goldenCode);
 }
 

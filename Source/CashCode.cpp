@@ -18,7 +18,15 @@ namespace
         return bits;
     }
 
-    int paramsIn (int codeVersion) { return codeVersion == 1 ? ParameterMap::numParamsV1 : ParameterMap::numParams; }
+    int paramsIn (int codeVersion)
+    {
+        switch (codeVersion)
+        {
+            case 1:  return ParameterMap::numParamsV1;
+            case 2:  return ParameterMap::numParamsV2;
+            default: return ParameterMap::numParams;
+        }
+    }
 
     int payloadBits (int codeVersion)
     {

@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-Milestone 6 (Cash Match + drive / LFO 2 / pitch env) **done**. Next: milestone 7 (polish, pluginval, README).
+Milestone 7 (Lead mode) **done**. Next: milestone 8 (section on/off toggles + automation-ready).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -15,7 +15,10 @@ Milestone 6 (Cash Match + drive / LFO 2 / pitch env) **done**. Next: milestone 7
 4. [x] Coin/Investment UI, Bank It, Risk, Vault, Jackpot
 5. [x] Stash presets + state saving
 6. [x] Cash Match (+ drive, LFO 2 routing, pitch env)
-7. [ ] Polish, pluginval, README
+7. [x] Lead mode: mono/legato, glide, priority, unison, controllers
+8. [ ] Section on/off toggles + automation-ready (smoothing, safe mode switches)
+9. [ ] Cash Match v2: match the whole sample, every part of it (user, 2026-11-17: matches aren't good enough)
+10. [ ] Polish, pluginval, README
 
 ## Key decisions
 - Build and test on this Mac (Intel, macOS 26.1); keep the Windows/VS2022 build supported.
@@ -92,6 +95,20 @@ Milestone 6 (Cash Match + drive / LFO 2 / pitch env) **done**. Next: milestone 7
 - Advanced panel: MASTER moved to row 1; new DRIVE section; pitch knob in FILTER / PITCH ENV; LFO 2 section.
 - Note names follow Logic (middle C = C3).
 
+## Lead mode (M7)
+- 11 params appended (39 -> 50, `CashCode::version` 3, 68 chars; v1/v2 still decode): `voiceMode` (Poly/Mono/Legato), `glideTime` (0-2 s), `glideMode` (Always/Legato), `glideType` (Time/Rate = time per octave), `notePriority` (Last/Low/High), `unisonVoices` 1-8, `unisonDetune` (100 % = 1 st between outer voices), `unisonSpread`, `bendRange` 1-24 st (default 2), `modVibrato` (CC1 -> LFO 1 pitch, 1 st at 100 %, default 50 %), `velToCutoff` (soft notes up to 48 st darker). Defaults = the M6 sound.
+- Weights: mode, glide mode/type, priority, bend, mod wheel = 0 (never mutated). Glide 0.3, unison voices 0.3, detune 0.4, spread 0.3, vel->cutoff 0.3. Jackpot keeps lead tame: glide on ~25 % (<= ~90 ms), unison 2-4 voices ~30 %, else off.
+- **`juce::Synthesiser` dropped**: `SynthEngine` owns 16 `CashVoice`s (plain class now) and does MIDI itself (omni; note on/off, pitch wheel, CC1, sustain CC64, all notes/sound off), split at each event's sample.
+- Poly: each note takes `unison` voices; free voice first, else steal the oldest (key-up first), never one started for the same note. Poly glide too (from the last note played).
+- Mono/Legato: held-key stack + priority; releasing the sounding key falls back to the priority pick of the keys still held. Mono retriggers envs on every new note (also fallback); Legato only when no key was down. Mono voices = voices 0..unison-1. Changing mode (or unison while mono) releases everything.
+- Glide is linear in semitones, per sample, from where the voice actually is (mid-glide ok). "Legato" glide mode = only when a key was already held.
+- Voices are stereo: pan gains L = 1 - pan, R = 1 + pan (centre unchanged, mono sum unchanged); unison voices spread -1..+1 in detune and pan, level 1/sqrt(n). `reset()` staggers voice phases (voice 0 still 0) so unison doesn't start in phase and renders stay repeatable.
+- Old projects: APVTS `replaceState` keeps *current* values for params missing from the tree, so `setStateInformation` now adds missing params at their defaults first (an M6 project loads as M6, even into an instance set to Mono).
+- Cash Match polish skips glide and vel->cutoff (a single full-velocity note can't hear them).
+- UI: back has a 4th row VOICE (Mode, Priority, Unison, Detune, Spread) / GLIDE (Time, When, Type) / PLAY (Bend, Mod Vib, Vel > Cut); spacing tightened so the knobs keep their size. Front: `VoiceModeSwitch` (POLY/MONO/LEGATO, `ParameterAttachment`) on a paper plate under the legal-tender text (`FrontLayout::voiceSwitch`).
+- Fixed: a slider whose value box never changes width in `resized()` kept the default LAF outline (box was built before the editor set `CashLookAndFeel`). Colours now set on each slider.
+- Tests (`Tests/LeadTests.cpp`, 9 cases): mono/legato voice counts incl. unison and poly steals, retrigger vs legato envelope, glide timing (constant time, constant rate, legato-only, poly), priority Last/Low/High fallback + sustain pedal, unison width (spread 0 = mono, level steady, pans), bend range / mod wheel / vel->cutoff, v2 code + M6 project/vault load with lead off, jackpot/invest leave mode alone, front switch <-> param.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
@@ -99,8 +116,11 @@ Milestone 6 (Cash Match + drive / LFO 2 / pitch env) **done**. Next: milestone 7
 `cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j8 && ctest --test-dir build`
 M5 verified 2026-11-17: clean build (-Werror), 41 Catch2 tests pass (adds patch tree, Stash files, project state round trip + fresh opening balance, bad/bare state, processor stash, stash bar, bill scan), `auval` PASS, snapshot checked by eye.
 M6 verified 2026-11-17: clean build (-Werror), 51 tests pass (~13 s), no JUCE assertions printed, `auval` PASS, snapshots checked by eye.
+M7 verified 2026-11-17: clean build (-Werror), 60 tests pass, no JUCE assertions, `auval` PASS, front/back snapshots checked by eye.
 - Fixed: the `juce_Slider.cpp:1485` assertion was `RiskDial` passing a negative start angle to `setRotaryParameters` (JUCE wants both angles in [0, 4pi)); now 1.5pi..2.5pi, same dial.
 
 ## Next
-- Try in Logic: drop a real one-shot (bass, pluck, pad) into Cash Match, HEAR MATCH vs HEAR SAMPLE, DEPOSIT, play the shown note. Check old projects/stashes still load (new knobs should be off).
-- Milestone 7: polish (flip animation, lock toggles per knob, maybe multithreaded matching), pluginval, README.
+- Try in Logic: Cash Match with a real one-shot; old M6 projects/stashes load with lead off; play a lead in Mono/Legato with glide, mod wheel and bend; unison 4-8 with spread on headphones; sustain pedal in both modes.
+- Milestone 8: on/off switch per section (Osc 1, Osc 2, Sub/Noise, Filter, Filter env, Drive, LFO 1, LFO 2, Unison, Glide), CashCode v4 (old = all on). Automation: all 50 params are host-automatable already, but only cutoff + master gain are smoothed (others step per block = zipper); voiceMode change releases all notes; unison count only affects new notes in poly. Not automatable by design: Risk, Invest/Jackpot, Stash, Vault, Cash Match.
+- Milestone 9: Cash Match v2: whole sample (not 2.5 s), ~10 ms frames, f0 over time (pitch env/vibrato), modulation detection (LFO/tremolo), brightness curve -> filter env, stereo width -> unison, per-part scores on the cheque, staged fit + multithreaded search, uses the section toggles.
+- Milestone 10: polish (flip animation, lock toggles per knob, maybe multithreaded matching), pluginval, README.

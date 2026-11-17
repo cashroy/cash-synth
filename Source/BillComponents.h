@@ -94,6 +94,26 @@ private:
     bool dark;
 };
 
+// Engraved three-way switch on the front: POLY / MONO / LEGATO (the voiceMode param).
+class VoiceModeSwitch final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit VoiceModeSwitch (juce::RangedAudioParameter&);
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    int getMode() const { return mode; }
+    void choose (int newMode); // as if clicked (undoable by the host, notifies it)
+
+private:
+    juce::Rectangle<float> segment (int index) const;
+    int segmentAt (juce::Point<float>) const;
+
+    juce::ParameterAttachment attachment;
+    int mode = 0, hover = -1;
+};
+
 class BillFront final : public juce::Component
 {
 public:
@@ -106,6 +126,7 @@ public:
     SerialTag& getSerial (int which) { return which == 0 ? serialTop : serialBottom; }
     ScopePortrait& getPortrait() { return portrait; }
     FlipButton& getFlipButton() { return flip; }
+    VoiceModeSwitch& getVoiceSwitch() { return voiceSwitch; }
 
     std::function<void()> onFlip, onMoneyMoved;
 
@@ -116,6 +137,7 @@ private:
     JackpotSeal seal;
     SerialTag serialTop, serialBottom;
     FlipButton flip { "FLIP FOR KNOBS", false };
+    VoiceModeSwitch voiceSwitch;
 };
 
 class BillBack final : public juce::Component
