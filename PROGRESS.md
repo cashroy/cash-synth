@@ -183,6 +183,11 @@
 - Tests: `Tests/PolishTests.cpp` (5), plus 3 in MintTests (stereo through filter/drive, Start/Loop, big-model project state: 10 s 128-partial bass = 3.2 MB state, save ~0.6 s / load ~0.35 s Debug, re-save byte-identical).
 - pluginval 1.0.4, strictness 10, `--validate-in-process`: **SUCCESS** for VST3 and AU. Only note: AU "Current program is -1" warning (one unnamed program; harmless). pluginval only exercises the default patch (Mint off): big-model state + Mint CPU are covered by our own test/bench.
 
+## Shipped (2026-11-18)
+- Repo: https://github.com/cashroy/cash-synth (public). PR #1 (milestones 3-13) merged into `main` as 5c8fef1. No CI configured: checks are local (ctest, auval, pluginval).
+- Website: https://cashroy.github.io/cashsynth/ (project page + card in Apps on the home page), repo `cashroy/cashroy.github.io`.
+- `gh` isn't installed system-wide; this session used a downloaded copy (v2.104.0) in its scratchpad, logged in as `cashroy`.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
