@@ -89,6 +89,8 @@ SynthEngine::SynthEngine (const RawLookup& lookup)
     bind (mintFine, param::mintFine);
     bind (mintStart, param::mintStart);
     bind (mintLoop, param::mintLoop);
+    for (size_t i = 0; i < layerRaw.size(); ++i)
+        bind (layerRaw[i], layers::ids()[i]);
 
     for (int i = 0; i < numVoices; ++i)
         voices.push_back (std::make_unique<CashVoice> (ctx));
@@ -236,6 +238,48 @@ void SynthEngine::readParameters()
     p.mintFine = mintFine.get() / 100.0f;
     p.mintStart = mintStart.get();
     p.mintLoop = mintLoop.get();
+
+    // M14 LAYERS: per-block settings (each layer smooths its own level).
+    set (laneLayersOn, gate (layerRaw[0]));
+    {
+        auto& L = p.layers;
+        auto v = [this] (int i) { return layerRaw[static_cast<size_t> (i)].get(); };
+        L.detail = juce::jlimit (1, layers::numTone, layerRaw[1].asInt());
+        L.pitchAmt = v (2);
+        L.pitchTime = v (3);
+        for (int l = 0; l < layers::numTone; ++l)
+        {
+            auto& t = L.tone[static_cast<size_t> (l)];
+            using namespace layers;
+            auto f = [&] (int field) { return v (toneIndex (l, field)); };
+            t.gain = f (level);
+            t.pan = f (pan);
+            t.semis = static_cast<float> (juce::roundToInt (f (octave)) * 12 + juce::roundToInt (f (semi))) + f (fine) / 100.0f;
+            t.a = f (attack); t.d = f (decay); t.s = f (sustain); t.r = f (release);
+            t.p = curveExponent (f (curve));
+            t.type = juce::roundToInt (f (fltType));
+            t.cutoffHz = f (cutoff);
+            const float r = f (reso);
+            t.q = 0.707f + r * r * 14.0f;
+            t.envSemis = f (envAmt) * envCutoffRange;
+            t.fa = f (fAttack); t.fd = f (fDecay); t.fs = f (fSustain); t.fr = f (fRelease);
+            t.l1p = f (l1Pitch) * lfoPitchRange;
+            t.l1l = f (l1Level);
+            t.l1c = f (l1Cutoff) * lfoCutoffRange;
+            t.l2p = f (l2Pitch) * lfoPitchRange;
+            t.l2l = f (l2Level);
+            t.l2c = f (l2Cutoff) * lfoCutoffRange;
+        }
+        for (int n = 0; n < layers::numNoise; ++n)
+        {
+            auto& z = L.noise[static_cast<size_t> (n)];
+            using namespace layers;
+            auto f = [&] (int field) { return v (noiseIndex (n, field)); };
+            z.gain = f (nLevel); z.centreHz = f (nCentre); z.octaves = f (nWidth); z.pan = f (nPan);
+            z.a = f (nAttack); z.d = f (nDecay); z.s = f (nSustain); z.r = f (nRelease);
+            z.slope = juce::roundToInt (f (nSlope));
+        }
+    }
 
     priority = notePriority.asInt();
     glideSeconds = glideOn.get() > 0.5f ? glideTime.get() : 0.0f;

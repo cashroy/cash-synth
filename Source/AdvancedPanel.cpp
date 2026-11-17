@@ -2,6 +2,7 @@
 #include "CashLookAndFeel.h"
 #include "Parameters.h"
 #include "ParameterMap.h"
+#include "Layers.h"
 
 namespace cash
 {
@@ -13,6 +14,37 @@ namespace
     constexpr int labelHeight = 14;
     constexpr int textBoxHeight = 16;
     constexpr float dimAlpha = 0.35f; // a switched-off section's knobs (still editable)
+    constexpr int stripWidth = 236;   // M14: the LAYERS section in the strip (3 knobs)
+    constexpr int waveWidth = 250;    // M14: the wave view at the strip's right end
+
+    void drawLitDot (juce::Graphics& g, juce::Point<float> centre, float d)
+    {
+        using namespace colours;
+        const auto dot = juce::Rectangle<float> (d, d).withCentre (centre);
+        g.setColour (ledGreen.withAlpha (0.35f));
+        g.fillEllipse (dot.expanded (2.5f));
+        g.setColour (ledGreen);
+        g.fillEllipse (dot);
+        g.setColour (knobBody.withAlpha (0.8f));
+        g.drawEllipse (dot, 0.8f);
+    }
+
+    void paintPlate (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& title, bool lit)
+    {
+        g.setColour (colours::panel);
+        g.fillRoundedRectangle (r, 8.0f);
+        g.setColour (colours::panelEdge);
+        g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
+        g.setColour (lit ? colours::gold : colours::goldDim);
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText (title, r.withHeight (static_cast<float> (titleHeight + 2)).reduced (10.0f, 0.0f), juce::Justification::centredLeft);
+    }
+
+    bool paramOn (juce::AudioProcessorValueTreeState& state, const char* id, float above = 0.5f)
+    {
+        const auto* v = state.getRawParameterValue (id);
+        return v != nullptr && v->load() > above;
+    }
 }
 
 //============================================================================== SectionSwitch
@@ -187,7 +219,7 @@ void AdvancedPanel::LockToggle::paint (juce::Graphics& g)
 AdvancedPanel::PageTabs::PageTabs (AdvancedPanel& p) : panel (p)
 {
     panel.onEffectsSwitched = [this] { repaint(); };
-    setTooltip ("Turn the page: synth controls / effects (delay, reverb) and the Mint");
+    setTooltip ("Turn the page: synth controls / effects (delay, reverb) and the Mint / the LAYERS Cash Match builds");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     setRepaintsOnMouseActivity (true);
 }
@@ -200,15 +232,17 @@ void AdvancedPanel::PageTabs::choose (int newPage)
 
 bool AdvancedPanel::PageTabs::isEffectsLit() const
 {
-    for (const auto* id : { param::delayOn, param::reverbOn })
-        if (const auto* v = panel.state.getRawParameterValue (id); v != nullptr && v->load() > 0.5f)
-            return true;
-    return false;
+    return paramOn (panel.state, param::delayOn) || paramOn (panel.state, param::reverbOn);
+}
+
+bool AdvancedPanel::PageTabs::isLayersLit() const
+{
+    return paramOn (panel.state, layers::layersOn);
 }
 
 void AdvancedPanel::PageTabs::mouseDown (const juce::MouseEvent& e)
 {
-    choose (e.position.x < static_cast<float> (getWidth()) * 0.5f ? synthPage : effectsPage);
+    choose (juce::jlimit (0, numPages - 1, static_cast<int> (e.position.x * numPages / static_cast<float> (juce::jmax (1, getWidth())))));
 }
 
 void AdvancedPanel::PageTabs::paint (juce::Graphics& g)
@@ -219,9 +253,9 @@ void AdvancedPanel::PageTabs::paint (juce::Graphics& g)
     g.setColour (knobBody);
     g.fillRoundedRectangle (r, radius);
 
-    const auto left = r.withWidth (r.getWidth() * 0.5f), right = left.withX (left.getRight());
-    const bool fx = panel.getPage() == effectsPage;
-    const auto lit = fx ? right : left;
+    const float w = r.getWidth() / numPages;
+    const auto cell = [&] (int i) { return juce::Rectangle<float> (r.getX() + w * static_cast<float> (i), r.getY(), w, r.getHeight()); };
+    const auto lit = cell (panel.getPage());
     juce::Path pill;
     pill.addRoundedRectangle (r.reduced (1.5f), radius - 1.5f);
     g.saveState();
@@ -232,40 +266,263 @@ void AdvancedPanel::PageTabs::paint (juce::Graphics& g)
 
     g.setColour (isMouseOver() ? gold : goldDim);
     g.drawRoundedRectangle (r, radius, 1.0f);
-    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    g.setColour (fx ? text.withAlpha (0.6f) : knobBody);
-    g.drawText ("SYNTH", left, juce::Justification::centred, false);
-    g.setColour (fx ? knobBody : text.withAlpha (0.6f));
-    g.drawText ("EFFECTS", right, juce::Justification::centred, false);
-
-    // M12: a lit dot after "EFFECTS" while delay or reverb is on, so you can tell
-    // from the synth page.
-    if (isEffectsLit())
+    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    const char* names[numPages] = { "SYNTH", "EFFECTS", "LAYERS" };
+    for (int i = 0; i < numPages; ++i)
     {
-        const float textW = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), "EFFECTS");
-        const float d = 6.0f;
-        const auto dot = juce::Rectangle<float> (d, d).withCentre ({ juce::jmin (right.getCentreX() + textW * 0.5f + 7.0f, right.getRight() - radius),
-                                                                      right.getCentreY() });
-        g.setColour (ledGreen.withAlpha (0.35f));
-        g.fillEllipse (dot.expanded (2.5f));
-        g.setColour (ledGreen);
-        g.fillEllipse (dot);
-        g.setColour (knobBody.withAlpha (0.8f));
-        g.drawEllipse (dot, 0.8f);
+        const bool chosen = panel.getPage() == i;
+        g.setColour (chosen ? knobBody : text.withAlpha (0.6f));
+        const auto c = cell (i);
+        g.drawText (names[i], c, juce::Justification::centred, false);
+        // M12: a lit dot after "EFFECTS" while delay or reverb is on; M14: after "LAYERS" while LAYERS is on.
+        if ((i == effectsPage && isEffectsLit()) || (i == layersPage && isLayersLit()))
+        {
+            const float textW = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), names[i]);
+            drawLitDot (g, { juce::jmin (c.getCentreX() + textW * 0.5f + 6.0f, c.getRight() - (i == numPages - 1 ? radius : 3.0f)), c.getCentreY() }, 5.0f);
+        }
     }
+}
+
+//============================================================================== LayerTabs
+AdvancedPanel::LayerTabs::LayerTabs (AdvancedPanel& p) : panel (p)
+{
+    setTooltip ("Pick a layer to edit: tone layers 1-8 (Detail sets how many play), noise layers 1-2");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setRepaintsOnMouseActivity (true);
+}
+
+juce::Rectangle<float> AdvancedPanel::LayerTabs::tabArea (int layer) const
+{
+    // [TONE] 1 2 3 4 5 6 7 8   [NOISE] 1 2
+    auto r = getLocalBounds().toFloat().reduced (10.0f, 0.0f);
+    r.removeFromTop (static_cast<float> (titleHeight + 6));
+    const float h = 28.0f, gap = 4.0f, toneLabel = 40.0f, noiseLabel = 48.0f, groupGap = 18.0f;
+    const float w = juce::jmin (44.0f, (r.getWidth() - toneLabel - noiseLabel - groupGap - gap * 9.0f) / 10.0f);
+    const float y = r.getY() + 4.0f;
+    float x = r.getX() + toneLabel;
+    if (layer >= layers::numTone)
+        x += 8.0f * (w + gap) + groupGap + noiseLabel + static_cast<float> (layer - layers::numTone) * (w + gap);
+    else
+        x += static_cast<float> (layer) * (w + gap);
+    return { x, y, w, h };
+}
+
+bool AdvancedPanel::LayerTabs::isLit (int layer) const
+{
+    using namespace layers;
+    if (! paramOn (panel.state, layersOn))
+        return false;
+    if (layer < numTone)
+    {
+        const auto* d = panel.state.getRawParameterValue (detail);
+        return (d == nullptr || layer < juce::roundToInt (d->load())) && paramOn (panel.state, toneId (layer, level), 0.001f);
+    }
+    return paramOn (panel.state, noiseId (layer - numTone, nLevel), 0.001f);
+}
+
+int AdvancedPanel::LayerTabs::layerAt (juce::Point<float> p) const
+{
+    for (int i = 0; i < numLayerTabs; ++i)
+        if (tabArea (i).expanded (2.0f).contains (p))
+            return i;
+    return -1;
+}
+
+void AdvancedPanel::LayerTabs::mouseDown (const juce::MouseEvent& e)
+{
+    if (const int i = layerAt (e.position); i >= 0)
+        panel.selectLayer (i);
+}
+
+void AdvancedPanel::LayerTabs::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    const auto bounds = getLocalBounds().toFloat();
+    paintPlate (g, bounds, "PICK A LAYER", true);
+
+    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    g.setColour (text.withAlpha (0.7f));
+    const auto first = tabArea (0), firstNoise = tabArea (layers::numTone);
+    g.drawText ("TONE", first.withX (first.getX() - 40.0f).withWidth (36.0f), juce::Justification::centredRight, false);
+    g.drawText ("NOISE", firstNoise.withX (firstNoise.getX() - 48.0f).withWidth (44.0f), juce::Justification::centredRight, false);
+
+    for (int i = 0; i < numLayerTabs; ++i)
+    {
+        const auto t = tabArea (i);
+        const bool chosen = panel.getSelectedLayer() == i;
+        if (chosen)
+            g.setGradientFill (juce::ColourGradient (gold.brighter (0.25f), t.getX(), t.getY(), gold.darker (0.3f), t.getX(), t.getBottom(), false));
+        else
+            g.setColour (knobBody);
+        g.fillRoundedRectangle (t, 6.0f);
+        g.setColour (chosen ? gold : goldDim);
+        g.drawRoundedRectangle (t, 6.0f, 1.0f);
+        g.setColour (chosen ? knobBody : text.withAlpha (isLit (i) ? 0.95f : 0.5f));
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText (juce::String (i < layers::numTone ? i + 1 : i - layers::numTone + 1), t, juce::Justification::centred, false);
+        if (isLit (i))
+            drawLitDot (g, { t.getRight() - 6.0f, t.getY() + 6.0f }, 4.0f);
+    }
+
+    // What the picked layer is, in a line.
+    const int sel = panel.getSelectedLayer();
+    juce::String line;
+    if (sel < layers::numTone)
+    {
+        const auto* d = panel.state.getRawParameterValue (layers::detail);
+        const int det = d != nullptr ? juce::roundToInt (d->load()) : 1;
+        line = "Tone layer " + juce::String (sel + 1) + ": a one-cycle wavetable with its own tuning, envelope, filter and LFO depths. "
+             + (sel < det ? "Plays (Detail " + juce::String (det) + ")." : "Off: Detail is " + juce::String (det) + ".");
+    }
+    else
+    {
+        line = "Noise layer " + juce::String (sel - layers::numTone + 1) + ": white noise through a band (centre, width, edge slope) with its own envelope.";
+    }
+    g.setColour (text.withAlpha (0.6f));
+    g.setFont (juce::FontOptions (10.5f));
+    g.drawFittedText (line, bounds.withTop (first.getBottom() + 4.0f).reduced (10.0f, 2.0f).toNearestInt(), juce::Justification::centredLeft, 2, 0.9f);
+}
+
+//============================================================================== WaveView
+AdvancedPanel::WaveView::WaveView (AdvancedPanel& p) : panel (p)
+{
+    setTooltip ("The picked layer: one cycle of its wavetable (Cash Match LAYERS draws it from your sample; a plain saw until then), or a noise layer's band");
+}
+
+void AdvancedPanel::WaveView::refresh()
+{
+    const MintRef now = panel.modelSource ? panel.modelSource() : nullptr;
+    const int sel = panel.getSelectedLayer();
+    std::array<float, 4> shape { -1.0f, -1.0f, -1.0f, -1.0f };
+    if (sel >= layers::numTone)
+    {
+        using namespace layers;
+        const int n = sel - numTone;
+        const auto read = [this] (const char* id) { const auto* v = panel.state.getRawParameterValue (id); return v != nullptr ? v->load() : 0.0f; };
+        shape = { read (noiseId (n, nCentre)), read (noiseId (n, nWidth)), read (noiseId (n, nSlope)), read (noiseId (n, nLevel)) };
+    }
+    const auto* tables = layers::tablesFor (now.get());
+    const auto* shownTables = layers::tablesFor (model.get());
+    if (sel == layer && tables == shownTables && shape == noiseShape && ! left.isEmpty())
+        return;
+    model = now;
+    layer = sel;
+    noiseShape = shape;
+
+    auto area = getLocalBounds().toFloat().reduced (12.0f, 0.0f);
+    area.removeFromTop (static_cast<float> (titleHeight + 4));
+    area.removeFromBottom (8.0f);
+    left.clear();
+    right.clear();
+    if (sel < layers::numTone)
+    {
+        // Peak over both channels so left and right share a scale.
+        constexpr int points = 200;
+        float peak = 1.0e-6f;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float* t = layers::table (tables, sel, 0, ch);
+            for (int i = 0; i < layers::tableSize; ++i)
+                peak = juce::jmax (peak, std::abs (t[i]));
+        }
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float* t = layers::table (tables, sel, 0, ch);
+            auto& path = ch == 0 ? left : right;
+            for (int i = 0; i <= points; ++i)
+            {
+                const float v = t[i * layers::tableSize / points] / peak;
+                const float x = area.getX() + area.getWidth() * static_cast<float> (i) / points;
+                const float y = area.getCentreY() - v * area.getHeight() * 0.45f;
+                if (i == 0) path.startNewSubPath (x, y); else path.lineTo (x, y);
+            }
+        }
+    }
+    else
+    {
+        constexpr int points = 160;
+        for (int i = 0; i <= points; ++i)
+        {
+            const float hz = 20.0f * std::pow (1000.0f, static_cast<float> (i) / points);
+            const float p = layers::noiseResponse (hz, shape[0], shape[1], juce::roundToInt (shape[2]), 44100.0);
+            const float db = juce::jlimit (-48.0f, 0.0f, 10.0f * std::log10 (juce::jmax (1.0e-10f, p)));
+            const float x = area.getX() + area.getWidth() * static_cast<float> (i) / points;
+            const float y = area.getY() + area.getHeight() * (-db / 48.0f);
+            if (i == 0) left.startNewSubPath (x, y); else left.lineTo (x, y);
+        }
+    }
+    repaint();
+}
+
+void AdvancedPanel::WaveView::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    const auto bounds = getLocalBounds().toFloat();
+    const bool noise = layer >= layers::numTone;
+    paintPlate (g, bounds, noise ? "BAND" : "WAVE", true);
+    auto area = bounds.reduced (12.0f, 0.0f);
+    area.removeFromTop (static_cast<float> (titleHeight + 4));
+    area.removeFromBottom (8.0f);
+    g.setColour (knobBody.withAlpha (0.6f));
+    g.fillRoundedRectangle (area.expanded (4.0f, 2.0f), 4.0f);
+    g.setColour (goldDim.withAlpha (0.35f));
+    if (noise)
+    {
+        for (float hz : { 100.0f, 1000.0f, 10000.0f })
+        {
+            const float x = area.getX() + area.getWidth() * std::log10 (hz / 20.0f) / 3.0f;
+            g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
+        }
+    }
+    else
+    {
+        g.drawHorizontalLine (juce::roundToInt (area.getCentreY()), area.getX(), area.getRight());
+        g.setColour (gold.withAlpha (0.3f));
+        g.strokePath (right, juce::PathStrokeType (1.2f));
+    }
+    g.setColour (gold);
+    g.strokePath (left, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved));
+
+    g.setColour (text.withAlpha (0.55f));
+    g.setFont (juce::FontOptions (10.0f));
+    const auto label = bounds.withHeight (static_cast<float> (titleHeight + 2)).reduced (10.0f, 0.0f);
+    const juce::String what = noise ? "Noise " + juce::String (layer - layers::numTone + 1) + "  20 Hz - 20 kHz"
+                                    : "Tone " + juce::String (layer + 1) + (model != nullptr && ! model->layerWaves.empty() ? "  L gold, R faint" : "  (saw until a match)");
+    g.drawText (what, label, juce::Justification::centredRight, false);
 }
 
 void AdvancedPanel::setPage (int newPage)
 {
-    newPage = juce::jlimit (0, 1, newPage);
+    newPage = juce::jlimit (0, numPages - 1, newPage);
     if (newPage == page)
         return;
     page = newPage;
     for (size_t i = 0; i < pages.size(); ++i)
-        pages[i].setVisible (static_cast<int> (i) == page);
+        pages[i]->setVisible (rowShowing (i * rowsPerPage));
     repaint();
     if (onPageChange)
         onPageChange (page);
+}
+
+void AdvancedPanel::selectLayer (int layer)
+{
+    layer = juce::jlimit (0, numLayerTabs - 1, layer);
+    if (layer == selectedLayer)
+        return;
+    selectedLayer = layer;
+    for (size_t i = 0; i < pages.size(); ++i)
+        pages[i]->setVisible (rowShowing (i * rowsPerPage));
+    layerTabs.repaint();
+    waveView.refresh();
+    repaint();
+}
+
+bool AdvancedPanel::rowShowing (size_t row) const
+{
+    const int pg = static_cast<int> (row) / rowsPerPage;
+    if (pg < numPages)
+        return pg == page;
+    return page == layersPage && pg - firstLayerPage == selectedLayer;
 }
 
 AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s, ParamLocks* l) : state (s), locks (l)
@@ -278,12 +535,13 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s, ParamLocks*
                     c->lock->repaint();
         };
     using namespace param;
-    for (auto& pg : pages)
+    for (int i = 0; i < firstLayerPage + numLayerTabs; ++i)
     {
-        pg.setInterceptsMouseClicks (false, true);
-        addChildComponent (pg);
+        auto& pg = pages.emplace_back (std::make_unique<juce::Component>());
+        pg->setInterceptsMouseClicks (false, true);
+        addChildComponent (*pg);
     }
-    pages[synthPage].setVisible (true);
+    pages[synthPage]->setVisible (true);
 
     addSection (0, "OSC 1", { { osc1Wave, "Wave" }, { osc1Octave, "Octave" }, { osc1Semi, "Semi" }, { osc1Fine, "Fine" }, { osc1Level, "Level" } }, osc1On);
     addSection (0, "OSC 2", { { osc2Wave, "Wave" }, { osc2Octave, "Octave" }, { osc2Semi, "Semi" }, { osc2Fine, "Fine" }, { osc2Level, "Level" } }, osc2On);
@@ -321,6 +579,70 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s, ParamLocks*
     addRateSync (lfo2Rate, lfo2Sync, lfo2Note);
     addRateSync (delayTime, delaySync, delayNote);
     addRateSync (reverbPreDelay, reverbPreSync, reverbPreNote);
+
+    addLayerPages();
+}
+
+void AdvancedPanel::addLayerPages()
+{
+    using namespace layers;
+    // The strip: LAYERS switch + Detail + the shared pitch envelope, then the tabs and the wave view.
+    addSection (stripRow, "LAYERS", { { detail, "Detail" }, { pitchAmt, "Pitch Env" }, { pitchTime, "Pitch Time" } }, layersOn);
+    auto& strip = *pages[layersPage];
+    strip.addAndMakeVisible (layerTabs);
+    strip.addAndMakeVisible (waveView);
+
+    for (int l = 0; l < numTone; ++l)
+    {
+        const int row = (firstLayerPage + l) * rowsPerPage;
+        const auto t = [l] (int f) { return toneId (l, f); };
+        addSection (row + 1, "TONE " + juce::String (l + 1), { { t (level), "Level" }, { t (pan), "Pan" }, { t (octave), "Octave" }, { t (semi), "Semi" }, { t (fine), "Fine" } });
+        addSection (row + 1, "AMP ENV", { { t (attack), "Attack" }, { t (decay), "Decay" }, { t (curve), "Curve" }, { t (sustain), "Sustain" }, { t (release), "Release" } });
+        addSection (row + 2, "FILTER", { { t (fltType), "Type" }, { t (cutoff), "Cutoff" }, { t (reso), "Reso" }, { t (envAmt), "Env Amt" } });
+        addSection (row + 2, "FILTER ENV", { { t (fAttack), "Attack" }, { t (fDecay), "Decay" }, { t (fSustain), "Sustain" }, { t (fRelease), "Release" } });
+        addSection (row + 3, "LFO 1 DEPTH", { { t (l1Pitch), "Pitch" }, { t (l1Level), "Level" }, { t (l1Cutoff), "Cutoff" } });
+        addSection (row + 3, "LFO 2 DEPTH", { { t (l2Pitch), "Pitch" }, { t (l2Level), "Level" }, { t (l2Cutoff), "Cutoff" } });
+    }
+    for (int n = 0; n < numNoise; ++n)
+    {
+        const int row = (firstLayerPage + numTone + n) * rowsPerPage;
+        const auto z = [n] (int f) { return noiseId (n, f); };
+        addSection (row + 1, "NOISE " + juce::String (n + 1), { { z (nLevel), "Level" }, { z (nCentre), "Centre" }, { z (nWidth), "Width" }, { z (nSlope), "Slope" }, { z (nPan), "Pan" } });
+        addSection (row + 1, "NOISE ENV", { { z (nAttack), "Attack" }, { z (nDecay), "Decay" }, { z (nSustain), "Sustain" }, { z (nRelease), "Release" } });
+    }
+
+    if (auto* p = state.getParameter (detail))
+    {
+        detailWatch = std::make_unique<juce::ParameterAttachment> (*p, [this] (float v) { detailNow = juce::roundToInt (v); updateLayerDimming(); layerTabs.repaint(); });
+        detailWatch->sendInitialUpdate();
+    }
+    updateLayerDimming();
+}
+
+void AdvancedPanel::updateLayerDimming()
+{
+    // The strip's switch and the Detail watcher hold the values their callbacks were given.
+    const SectionSwitch* sw = rows.size() > static_cast<size_t> (stripRow) && ! rows[static_cast<size_t> (stripRow)].empty()
+                                  ? rows[static_cast<size_t> (stripRow)].front().onOff : nullptr;
+    const bool on = sw != nullptr ? sw->isOn() : paramOn (state, layers::layersOn);
+    const int det = detailNow;
+    for (size_t ri = static_cast<size_t> (firstLayerPage * rowsPerPage); ri < rows.size(); ++ri)
+    {
+        const int layer = static_cast<int> (ri) / rowsPerPage - firstLayerPage;
+        const bool plays = on && (layer >= layers::numTone || layer < det);
+        for (auto& sec : rows[ri])
+        {
+            sec.dimmed = ! plays;
+            for (auto* c : sec.controls)
+            {
+                const float a = plays ? 1.0f : dimAlpha;
+                c->label.setAlpha (a);
+                if (c->slider != nullptr) c->slider->setAlpha (a);
+                if (c->combo != nullptr)  c->combo->setAlpha (a);
+            }
+        }
+    }
+    repaint();
 }
 
 std::unique_ptr<juce::Slider> AdvancedPanel::makeKnob (juce::Component& parent, const char* id, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>& attachment)
@@ -487,6 +809,8 @@ void AdvancedPanel::setSectionOn (int row, size_t index, bool on)
         if (c->rateMode != nullptr)   c->rateMode->setAlpha (on ? 1.0f : 0.6f);
     }
     repaint (section.bounds);
+    if (row == stripRow)
+        updateLayerDimming();
     if (row >= rowsPerPage && onEffectsSwitched)
         onEffectsSwitched();
 }
@@ -497,6 +821,22 @@ AdvancedPanel::SectionSwitch* AdvancedPanel::getSwitch (const juce::String& para
         if (sw->paramId == paramId)
             return sw.get();
     return nullptr;
+}
+
+juce::ComboBox* AdvancedPanel::getMenu (const juce::String& paramId) const
+{
+    for (const auto& c : controls)
+        if (c->paramId == paramId)
+            return c->combo.get();
+    return nullptr;
+}
+
+bool AdvancedPanel::hasControlFor (const juce::String& paramId) const
+{
+    for (const auto& c : controls)
+        if (c->paramId == paramId || c->noteId == paramId || (c->rateMode != nullptr && c->rateMode->paramId == paramId))
+            return true;
+    return getSwitch (paramId) != nullptr;
 }
 
 float AdvancedPanel::getControlAlpha (const juce::String& paramId) const
@@ -511,25 +851,35 @@ void AdvancedPanel::paint (juce::Graphics& g)
 {
     for (size_t ri = 0; ri < rows.size(); ++ri)
     {
-        if (static_cast<int> (ri) / rowsPerPage != page)
+        if (! rowShowing (ri))
             continue;
         for (const auto& s : rows[ri])
-        {
-            const auto r = s.bounds.toFloat();
-            g.setColour (colours::panel);
-            g.fillRoundedRectangle (r, 8.0f);
-            g.setColour (colours::panelEdge);
-            g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
-
-            const bool on = s.onOff == nullptr || s.onOff->isOn();
-            g.setColour (on ? colours::gold : colours::goldDim);
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawText (s.title, s.bounds.withHeight (titleHeight + 2).reduced (10, 0), juce::Justification::centredLeft);
-        }
+            paintPlate (g, s.bounds.toFloat(), s.title, (s.onOff == nullptr || s.onOff->isOn()) && ! s.dimmed);
     }
 
     if (page == effectsPage)
         paintSignalPath (g);
+    if (page == layersPage && selectedLayer >= layers::numTone)
+        paintNoiseNote (g);
+}
+
+void AdvancedPanel::paintNoiseNote (juce::Graphics& g)
+{
+    // A noise layer has two rows of knobs; the plate under them says what they do.
+    auto area = getLocalBounds();
+    const int rowHeight = (area.getHeight() - rowGap * (rowsPerPage - 1)) / rowsPerPage;
+    area.removeFromTop (2 * (rowHeight + rowGap));
+    const auto plate = area.toFloat().reduced (0.0f, 4.0f);
+    g.setColour (colours::panel.withAlpha (0.55f));
+    g.fillRoundedRectangle (plate, 8.0f);
+    g.setColour (colours::panelEdge);
+    g.drawRoundedRectangle (plate.reduced (0.5f), 8.0f, 1.0f);
+    g.setColour (colours::text.withAlpha (0.6f));
+    g.setFont (juce::FontOptions (12.0f));
+    g.drawFittedText ("White noise through a band: Centre and Width (octaves between the -3 dB edges) place it, Slope sets how sharp its edges are "
+                      "(6 dB per octave = one band-pass, up to 48 dB = four high-pass + low-pass pairs). The band follows the key from C4. "
+                      "Cash Match fits both noise layers to the sample's noise: claps, breath, bow and hammer noise.",
+                      plate.reduced (24.0f, 10.0f).toNearestInt(), juce::Justification::centred, 4, 0.9f);
 }
 
 void AdvancedPanel::paintSignalPath (juce::Graphics& g)
@@ -577,7 +927,7 @@ void AdvancedPanel::paintSignalPath (juce::Graphics& g)
 void AdvancedPanel::resized()
 {
     for (auto& pg : pages)
-        pg.setBounds (getLocalBounds());
+        pg->setBounds (getLocalBounds());
 
     const auto full = getLocalBounds();
     if (rows.empty())
@@ -591,6 +941,15 @@ void AdvancedPanel::resized()
         auto& row = rows[ri];
         const int slot = static_cast<int> (ri) % rowsPerPage;
         auto rowArea = full.withTop (full.getY() + slot * (rowHeight + rowGap)).withHeight (rowHeight);
+        if (static_cast<int> (ri) == stripRow)
+        {
+            // M14: the LAYERS section, then the layer tabs and the wave view.
+            auto extra = rowArea.withTrimmedLeft (stripWidth + sectionGap);
+            rowArea = rowArea.withWidth (stripWidth);
+            waveView.setBounds (extra.removeFromRight (waveWidth));
+            extra.removeFromRight (sectionGap);
+            layerTabs.setBounds (extra);
+        }
 
         int units = 0;
         for (const auto& s : row)

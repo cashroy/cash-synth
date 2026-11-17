@@ -3,6 +3,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "ParamLocks.h"
+#include "Mint.h"
+#include "Layers.h"
 
 namespace cash
 {
@@ -71,10 +73,58 @@ public:
         juce::StringArray ids;
     };
 
-    // M11: the back of the bill has two pages: the synth (4 rows) and the effects
-    // (DELAY, REVERB). Same row height on both, so every knob keeps its size.
-    enum Page { synthPage = 0, effectsPage = 1 };
+    // M11: the back of the bill has pages: the synth (4 rows) and the effects
+    // (DELAY, REVERB, MINT); M14 adds LAYERS. Same row height on all, so every knob keeps its size.
+    enum Page { synthPage = 0, effectsPage = 1, layersPage = 2 };
+    static constexpr int numPages = 3;
     static constexpr int rowsPerPage = 4;
+
+    // M14 LAYERS page: a strip (switch, Detail, pitch env, layer tabs, wave view) over
+    // the picked layer's knobs. Layers 0..7 are tone layers, 8..9 the noise layers.
+    static constexpr int numLayerTabs = 10;
+    void selectLayer (int layer);
+    int getSelectedLayer() const { return selectedLayer; }
+    // The Mint model whose wavetables the layers play (the editor points it at the processor).
+    std::function<MintRef()> modelSource;
+
+    // Tabs TONE 1-8 | NOISE 1-2. A lit dot = the layer sounds (on within Detail, level up).
+    class LayerTabs final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+    {
+    public:
+        explicit LayerTabs (AdvancedPanel&);
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        juce::Rectangle<float> tabArea (int layer) const;
+        int layerAt (juce::Point<float>) const; // -1: not on a tab
+        bool isLit (int layer) const;
+
+    private:
+        void timerCallback() override { repaint(); }
+        void visibilityChanged() override { if (isShowing()) startTimerHz (5); else stopTimer(); }
+        AdvancedPanel& panel;
+    };
+
+    // One cycle of the picked tone layer's wavetable (left in gold, right faint), or
+    // the picked noise layer's band (its filter's response, 20 Hz - 20 kHz).
+    class WaveView final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+    {
+    public:
+        explicit WaveView (AdvancedPanel&);
+        void paint (juce::Graphics&) override;
+        void refresh(); // re-reads the model and the picked layer
+        const MintModel* getShownModel() const { return model.get(); }
+
+    private:
+        void timerCallback() override { refresh(); }
+        void visibilityChanged() override { if (isShowing()) { refresh(); startTimerHz (8); } else stopTimer(); }
+        AdvancedPanel& panel;
+        MintRef model;
+        int layer = -1;
+        juce::Path left, right;
+        std::array<float, 4> noiseShape { -1.0f, -1.0f, -1.0f, -1.0f };
+    };
+    LayerTabs& getLayerTabs() { return layerTabs; }
+    WaveView& getWaveView() { return waveView; }
     void setPage (int page);
     int getPage() const { return page; }
     std::function<void (int)> onPageChange;
@@ -88,6 +138,7 @@ public:
         void mouseDown (const juce::MouseEvent&) override;
         void choose (int page);
         bool isEffectsLit() const; // M12: delay or reverb is on (a lit dot on EFFECTS)
+        bool isLayersLit() const;  // M14: LAYERS is on (a lit dot on LAYERS)
 
     private:
         AdvancedPanel& panel;
@@ -99,6 +150,9 @@ public:
     RateModeSwitch* getRateMode (const juce::String& syncParamId) const;
     juce::Slider* getKnob (const juce::String& paramId) const; // rate and note knobs included
     float getControlAlpha (const juce::String& paramId) const; // dimmed while its section is off
+    juce::ComboBox* getMenu (const juce::String& paramId) const; // choice params
+    // True if the parameter has a control on the back (knob, menu, switch, rate toggle or note knob).
+    bool hasControlFor (const juce::String& paramId) const;
     LockToggle* getLock (const juce::String& paramId) const;    // null: not lockable / no locks
     std::function<void()> onEffectsSwitched; // delay or reverb switched on/off (PageTabs repaints)
 
@@ -126,23 +180,36 @@ private:
         std::vector<Control*> controls;
         juce::Rectangle<int> bounds;
         SectionSwitch* onOff = nullptr;
+        bool dimmed = false; // M14: a layer section while LAYERS is off / past Detail
     };
 
     void addSection (int row, const juce::String& title, std::initializer_list<std::pair<const char*, const char*>> params,
                      const char* switchId = nullptr);
     void setSectionOn (int row, size_t index, bool on);
     void paintSignalPath (juce::Graphics&);
+    void paintNoiseNote (juce::Graphics&);
+    void updateLayerDimming();
+    void addLayerPages();
+    bool rowShowing (size_t row) const;
     void addRateSync (const char* rateId, const char* syncId, const char* noteId);
     std::unique_ptr<juce::Slider> makeKnob (juce::Component& parent, const char* paramId, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>&);
-    juce::Component& pageFor (int row) { return pages[static_cast<size_t> (juce::jlimit (0, 1, row / rowsPerPage))]; }
+    // Pages 0..2, then one sub-page per layer (shown under the LAYERS strip).
+    static constexpr int firstLayerPage = numPages;
+    static constexpr int stripRow = layersPage * rowsPerPage;
+    juce::Component& pageFor (int row) { return *pages[static_cast<size_t> (juce::jlimit (0, static_cast<int> (pages.size()) - 1, row / rowsPerPage))]; }
 
     juce::AudioProcessorValueTreeState& state;
     ParamLocks* locks;
     std::vector<std::unique_ptr<Control>> controls;
     std::vector<std::vector<Section>> rows;
     std::vector<std::unique_ptr<SectionSwitch>> switches;
-    std::array<juce::Component, 2> pages; // transparent; the panel paints the section plates
+    std::vector<std::unique_ptr<juce::Component>> pages; // transparent; the panel paints the section plates
     int page = synthPage;
+    int selectedLayer = 0;
+    LayerTabs layerTabs { *this };
+    WaveView waveView { *this };
+    std::unique_ptr<juce::ParameterAttachment> detailWatch; // dims tone layers past Detail
+    int detailNow = layers::numTone;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdvancedPanel)
 };

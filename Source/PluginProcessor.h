@@ -95,7 +95,12 @@ public:
     // Cash Match: analyse a sample, search for the closest patch, deposit it (undoable).
     cash::CashMatcher& getMatcher() { return matcher; }
     void startMatch (uint64_t seed, cash::MatchBudget = {});
-    bool depositMatch();                 // applies the best match as a ledger entry
+    bool depositMatch();                 // applies the picked match (EXACT or LAYERS) as a ledger entry
+    // M14: which of the match's two patches HEAR MATCH and DEPOSIT use (falls back
+    // to whichever exists). Each deposit is its own undoable ledger entry.
+    void setMatchPicksLayers (bool layers) { matchPicksLayers = layers; }
+    bool getMatchPicksLayers() const { return matchPicksLayers; }
+    bool matchUsesLayers() const;        // the pick, after the fallback
     void previewTarget();                // hear the sample
     void previewMatch();                 // hear the best match (rendered offline)
     void stopPreview() { preview.stop(); }
@@ -126,6 +131,7 @@ private:
     cash::CashMatcher matcher { state }; // after `state`: it borrows its parameter ranges
 
     cash::MintRef mint;                       // what the engine plays (message thread owns it)
+    bool matchPicksLayers = false;
     std::vector<cash::MintRef> retiredMints;  // swapped out, freed once the audio thread let go
     cash::MintRef stashMint;                  // the model of the last stash saved/loaded
     void setMint (cash::MintRef);

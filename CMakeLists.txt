@@ -64,7 +64,8 @@ set(CASH_SOURCES
     Source/MatchPanel.cpp
     Source/Tempo.cpp
     Source/Effects.cpp
-    Source/Mint.cpp)
+    Source/Mint.cpp
+    Source/Layers.cpp)
 
 target_sources(CashSynth PRIVATE ${CASH_SOURCES})
 
@@ -98,7 +99,7 @@ endif()
 set_source_files_properties(${CASH_SOURCES} PROPERTIES COMPILE_OPTIONS "${CASH_WARNINGS}")
 # The Mint's analysis is heavy number crunching: optimise it even in Debug so Cash Match stays quick.
 if(NOT MSVC)
-    set_property(SOURCE Source/Mint.cpp APPEND PROPERTY COMPILE_OPTIONS -O2)
+    set_property(SOURCE Source/Mint.cpp Source/Layers.cpp APPEND PROPERTY COMPILE_OPTIONS -O2)
 endif()
 
 # ----------------------------------------------------------------- tests
@@ -111,7 +112,7 @@ if(CASH_BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
 
     enable_testing()
-    set(CASH_TEST_SOURCES Tests/ProcessorTests.cpp Tests/EngineTests.cpp Tests/CashTests.cpp Tests/UiTests.cpp Tests/StateTests.cpp Tests/MatchTests.cpp Tests/LeadTests.cpp Tests/AutomationTests.cpp Tests/MatchV2Tests.cpp Tests/TempoTests.cpp Tests/EffectsTests.cpp Tests/PolishTests.cpp Tests/MintTests.cpp Tests/RealSampleTests.cpp)
+    set(CASH_TEST_SOURCES Tests/ProcessorTests.cpp Tests/EngineTests.cpp Tests/CashTests.cpp Tests/UiTests.cpp Tests/StateTests.cpp Tests/MatchTests.cpp Tests/LeadTests.cpp Tests/AutomationTests.cpp Tests/MatchV2Tests.cpp Tests/TempoTests.cpp Tests/EffectsTests.cpp Tests/PolishTests.cpp Tests/MintTests.cpp Tests/RealSampleTests.cpp Tests/LayersTests.cpp)
     add_executable(CashSynthTests ${CASH_TEST_SOURCES})
     target_link_libraries(CashSynthTests PRIVATE CashSynth Catch2::Catch2WithMain)
     # Reuse the plugin's compiled JUCE code; only borrow its headers and module defines.

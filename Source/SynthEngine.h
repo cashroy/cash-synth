@@ -114,6 +114,7 @@ private:
     Raw osc1On, osc2On, subNoiseOn, filterOn, filterEnvOn, driveOn, lfo1On, lfo2On, unisonOn, glideOn;
     Raw lfo1Sync, lfo1Note, lfo2Sync, lfo2Note;
     Raw mintOn, mintLevel, mintNoise, mintTone, mintSpeed, mintFine, mintStart, mintLoop;
+    std::array<Raw, layers::numParams> layerRaw; // M14, in layers::ids() order
 
     std::atomic<const MintModel*> wantedMint { nullptr }, usedMint { nullptr };
     const MintModel* busy() const { return reinterpret_cast<const MintModel*> (&usedMint); } // "picking one up now"

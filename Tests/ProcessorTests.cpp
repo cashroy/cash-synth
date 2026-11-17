@@ -1,3 +1,4 @@
+#include "Layers.h"
 #include <catch2/catch_test_macros.hpp>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
@@ -46,4 +47,11 @@ TEST_CASE ("Editor builds a control for every parameter", "[editor]")
     auto* cashEditor = dynamic_cast<CashSynthAudioProcessorEditor*> (editor.get());
     REQUIRE (cashEditor != nullptr);
     CHECK (cashEditor->getAdvancedPanel().getNumControls() == p.getParameters().size());
+    // One each, LAYERS included (M14 part 2): every parameter has its own control.
+    for (auto* param : p.getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+        {
+            INFO (ranged->paramID);
+            CHECK (cashEditor->getAdvancedPanel().hasControlFor (ranged->paramID));
+        }
 }

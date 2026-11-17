@@ -1,5 +1,6 @@
 #include "Parameters.h"
 #include "Tempo.h"
+#include "Layers.h"
 
 namespace cash::param
 {
@@ -200,6 +201,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     // M13 polish (append-only, CashCode v8). Defaults = the M13 sound.
     addFloat (l, mintStart, "Mint Start", { 0.0f, 1.0f }, 0.0f, percent());
     addFloat (l, mintLoop, "Mint Loop", skewed (0.1f, 3.0f, 1.0f), 1.0f, percent());
+    // M14 LAYERS (append-only, CashCode v9). Off by default = the M13 sound.
+    layers::addParams (l);
 
     return l;
 }

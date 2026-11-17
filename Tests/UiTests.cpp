@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "PluginEditor.h"
+#include "Layers.h"
 #include "PluginProcessor.h"
 #include "CashCode.h"
 #include "Parameters.h"
@@ -247,6 +248,21 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
     rig.editor->getBack().getPageTabs().choose (cash::AdvancedPanel::effectsPage);
     rig.p.getState().getParameter (cash::param::delayOn)->setValueNotifyingHost (1.0f);
     write (front.getSiblingFile (front.getFileNameWithoutExtension() + "-back-fx.png"));
+    // M14: the LAYERS page, on, Detail 3, tone layer 2 picked; then noise layer 1 (24 dB edges).
+    auto& st = rig.p.getState();
+    const auto setReal = [&st] (const char* id, float v) { auto* q = st.getParameter (id); q->setValueNotifyingHost (q->convertTo0to1 (v)); };
+    setReal (cash::layers::layersOn, 1.0f);
+    setReal (cash::layers::detail, 3.0f);
+    setReal (cash::layers::toneId (1, cash::layers::curve), 0.5f);
+    setReal (cash::layers::toneId (1, cash::layers::cutoff), 2400.0f);
+    setReal (cash::layers::noiseId (0, cash::layers::nLevel), 0.3f);
+    setReal (cash::layers::noiseId (0, cash::layers::nSlope), 2.0f);
+    setReal (cash::layers::noiseId (0, cash::layers::nWidth), 1.5f);
+    rig.editor->getBack().getPageTabs().choose (cash::AdvancedPanel::layersPage);
+    rig.editor->getAdvancedPanel().selectLayer (1);
+    write (front.getSiblingFile (front.getFileNameWithoutExtension() + "-back-layers.png"));
+    rig.editor->getAdvancedPanel().selectLayer (cash::layers::numTone);
+    write (front.getSiblingFile (front.getFileNameWithoutExtension() + "-back-noise.png"));
     stashDir.deleteRecursively();
 }
 

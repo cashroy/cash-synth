@@ -66,8 +66,45 @@ MatchPanel::MatchPanel (CashSynthAudioProcessor& p) : processor (p)
             onClose();
     };
 
+    // M14: which match HEAR MATCH / DEPOSIT use, and how many layers LAYERS fits.
+    for (auto* b : { &exactPick, &layersPick })
+    {
+        addAndMakeVisible (*b);
+        b->setClickingTogglesState (false);
+        b->setRadioGroupId (0x1A7E);
+    }
+    exactPick.setTooltip ("EXACT: the Mint plays the sample's measured partials + noise");
+    layersPick.setTooltip ("LAYERS: an editable patch of wavetable layers, filters, envelopes and noise");
+    exactPick.onClick = [this] { pick (false); };
+    layersPick.onClick = [this] { pick (true); };
+    for (int d = 1; d <= layers::numTone; ++d)
+        detailBox.addItem ("DETAIL " + juce::String (d), d);
+    detailBox.setSelectedId (layers::numTone, juce::dontSendNotification);
+    detailBox.setTooltip ("How many tone layers LAYERS uses (changing it re-fits them)");
+    addAndMakeVisible (detailBox);
+    detailBox.onChange = [this]
+    {
+        auto& m = processor.getMatcher();
+        if (! m.hasTarget() || m.isSearching() || ! m.getResult().layered.found)
+            return;
+        MatchBudget b;
+        b.mode = MatchBudget::Mode::layers;
+        b.detail = detailBox.getSelectedId();
+        b.refit = true;
+        processor.startMatch (0xC0FFEEull + ++runs * 7919ull, b);
+        status = "Re-fitting " + juce::String (b.detail) + " layers...";
+        sync();
+    };
+
     status = "Drop a sample on the cheque, or LOAD SAMPLE.";
     updateButtons();
+}
+
+void MatchPanel::pick (bool layers)
+{
+    processor.setMatchPicksLayers (layers);
+    shownTried = -1; // refresh the amount, parts and wave
+    sync();
 }
 
 MatchPanel::~MatchPanel() = default;
@@ -137,7 +174,9 @@ void MatchPanel::startMatching()
 {
     if (! processor.getMatcher().hasTarget())
         return;
-    processor.startMatch (0xC0FFEEull + ++runs * 7919ull);
+    MatchBudget b;
+    b.detail = juce::jmax (1, detailBox.getSelectedId());
+    processor.startMatch (0xC0FFEEull + ++runs * 7919ull, b);
     status = "Shopping around for your sound...";
 }
 
@@ -163,20 +202,37 @@ void MatchPanel::sync()
     found = r.found;
     progress = r.progress;
 
-    if (r.tried != shownTried || wasSearching != searching)
+    // M14: show the picked match (EXACT or LAYERS).
+    const bool both = r.exact.found || r.layered.found;
+    const bool useLayers = processor.matchUsesLayers();
+    const auto& o = r.pick (useLayers);
+    const int pickedPercent = both ? o.percent : r.percent;
+    exactPick.setButtonText (r.exact.found ? "EXACT " + juce::String (r.exact.percent) + "%" : juce::String ("EXACT --"));
+    layersPick.setButtonText (r.layered.found ? "LAYERS " + juce::String (r.layered.percent) + "%" : juce::String ("LAYERS --"));
+    exactPick.setToggleState (found && ! useLayers, juce::dontSendNotification);
+    layersPick.setToggleState (found && useLayers, juce::dontSendNotification);
+
+    if (r.tried != shownTried || wasSearching != searching || useLayers != shownLayers)
     {
         shownTried = r.tried;
-        if (found && percent != r.percent)
-            matchWave = m.getBestRender();
+        const auto wave = [&] { return both ? m.getRender (useLayers) : m.getBestRender(); };
+        if (found && (percent != pickedPercent || useLayers != shownLayers))
+            matchWave = wave();
         else if (found && matchWave.getNumSamples() == 0)
-            matchWave = m.getBestRender();
-        percent = r.percent;
-        parts = r.parts;
+            matchWave = wave();
+        shownLayers = useLayers;
+        percent = pickedPercent;
+        parts = both ? o.parts : r.parts;
         sectionsOff = r.sectionsOff;
 
         if (searching)
             status = r.tried == 0 ? juce::String ("Minting: measuring every partial of the sample...")
                                   : "Shopping around... " + juce::String (r.tried) + " sounds tried";
+        else if (found && useLayers)
+        {
+            status = (r.progress >= 1.0f ? "Layered: " : "Stopped: ") + juce::String (r.layered.layers) + " tone layers + noise, every knob editable.";
+            status << " HEAR MATCH, then DEPOSIT.";
+        }
         else if (found && r.mint != nullptr)
         {
             // M13: the synth rebuilds the sample from sine partials + shaped noise.
@@ -212,6 +268,10 @@ void MatchPanel::updateButtons()
     matchIt.setButtonText (m.isSearching() ? "STOP" : (found ? "MATCH AGAIN" : "MATCH IT"));
     hearMatch.setEnabled (found);
     deposit.setEnabled (found);
+    const auto r = m.getResult();
+    exactPick.setEnabled (r.exact.found);
+    layersPick.setEnabled (r.layered.found);
+    detailBox.setEnabled (r.layered.found && ! m.isSearching());
 }
 
 void MatchPanel::paintWave (juce::Graphics& g, juce::Rectangle<float> r, const juce::AudioBuffer<float>& audio, juce::Colour c, bool filled) const
@@ -441,7 +501,18 @@ void MatchPanel::resized()
     r.removeFromBottom (10);
     dropArea = r;
 
-    amountArea = right.removeFromTop (juce::jmin (150, right.getHeight() / 2));
+    pickArea = right.removeFromTop (26);
+    {
+        auto row = pickArea;
+        const int bw = (row.getWidth() - 12) / 3;
+        exactPick.setBounds (row.removeFromLeft (bw));
+        row.removeFromLeft (6);
+        layersPick.setBounds (row.removeFromLeft (bw));
+        row.removeFromLeft (6);
+        detailBox.setBounds (row);
+    }
+    right.removeFromTop (6);
+    amountArea = right.removeFromTop (juce::jmin (130, right.getHeight() / 2));
     right.removeFromTop (8);
     partsArea = right.removeFromTop (juce::jmin (104, right.getHeight() - 40));
     right.removeFromTop (6);

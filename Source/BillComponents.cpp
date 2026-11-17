@@ -390,7 +390,7 @@ void BillBack::resized()
     auto inner = getLocalBounds().reduced (20, 18);
     auto titleRow = inner.removeFromTop (24);
     flip.setBounds (titleRow.removeFromRight (150).reduced (0, 1));
-    tabs.setBounds (titleRow.removeFromLeft (170).reduced (0, 1)); // left of the centred title
+    tabs.setBounds (titleRow.removeFromLeft (234).reduced (0, 1)); // left of the centred title (SYNTH | EFFECTS | LAYERS)
     inner.removeFromTop (4);
     advanced.setBounds (inner);
 }

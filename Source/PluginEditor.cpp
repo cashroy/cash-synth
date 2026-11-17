@@ -20,6 +20,7 @@ CashSynthAudioProcessorEditor::CashSynthAudioProcessorEditor (CashSynthAudioProc
     addChildComponent (flipCard);
 
     front.onFlip = back.onFlip = [this] { flip(); };
+    back.getAdvancedPanel().modelSource = [this] { return processor.getMint(); }; // M14: the layers' wavetables
     front.onMoneyMoved = tray.onMoneyMoved = stashBar.onMoneyMoved = match.onMoneyMoved = [this] { syncFromProcessor(); };
     stashBar.onMatch = [this] { showMatch (! match.isVisible()); };
     match.onClose = [this] { showMatch (false); };

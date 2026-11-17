@@ -38,7 +38,7 @@ juce::File Stash::save (const juce::String& name, const Patch& patch, const Mint
     root.setProperty ("name", nameOf (file), nullptr);
     root.setProperty ("code", CashCode::encode (patch), nullptr);
     root.appendChild (patchToTree (patch, patchType), nullptr);
-    if (mint != nullptr && patch[static_cast<size_t> (ParameterMap::indexOf ("mintOn"))] >= 0.5f)
+    if (mint != nullptr && mint::usesModel (patch))
     {
         juce::ValueTree m ("Mint");
         m.setProperty ("data", mint->toMemory().toBase64Encoding(), nullptr);
