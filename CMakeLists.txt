@@ -120,7 +120,13 @@ if(CASH_BUILD_TESTS)
     # Reuse the plugin's compiled JUCE code; only borrow its headers and module defines.
     target_include_directories(CashSynthTests PRIVATE $<TARGET_PROPERTY:CashSynth,INCLUDE_DIRECTORIES>)
     target_compile_definitions(CashSynthTests PRIVATE $<TARGET_PROPERTY:CashSynth,COMPILE_DEFINITIONS>)
-    set_source_files_properties(${CASH_TEST_SOURCES} PROPERTIES COMPILE_OPTIONS "${CASH_WARNINGS}")
+    # Tests keep file-level constants like `sampleRate`; MSVC would flag JUCE's own template
+    # parameters of that name (C4459) as hiding them.
+    set(CASH_TEST_WARNINGS ${CASH_WARNINGS})
+    if(MSVC)
+        list(APPEND CASH_TEST_WARNINGS /wd4459)
+    endif()
+    set_source_files_properties(${CASH_TEST_SOURCES} PROPERTIES COMPILE_OPTIONS "${CASH_TEST_WARNINGS}")
 
     list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
     include(Catch)
