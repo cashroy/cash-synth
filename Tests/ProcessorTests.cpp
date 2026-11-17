@@ -47,20 +47,3 @@ TEST_CASE ("Editor builds a control for every parameter", "[editor]")
     REQUIRE (cashEditor != nullptr);
     CHECK (cashEditor->getAdvancedPanel().getNumControls() == p.getParameters().size());
 }
-
-// Hidden (run with "[snapshot]"): renders the editor to $CASH_SNAPSHOT as a PNG for visual checks.
-TEST_CASE ("Editor snapshot", "[.][snapshot]")
-{
-    juce::ScopedJuceInitialiser_GUI juceInit;
-    CashSynthAudioProcessor p;
-    std::unique_ptr<juce::AudioProcessorEditor> editor (p.createEditor());
-
-    const auto path = juce::SystemStats::getEnvironmentVariable ("CASH_SNAPSHOT", {});
-    REQUIRE (path.isNotEmpty());
-    juce::File file (path);
-    file.deleteFile();
-    juce::FileOutputStream stream (file);
-    REQUIRE (stream.openedOk());
-    juce::PNGImageFormat png;
-    CHECK (png.writeImageToStream (editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f), stream));
-}

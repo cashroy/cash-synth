@@ -1,4 +1,7 @@
 #include "SynthVoice.h"
+#include "Parameters.h"
+
+namespace param2 = cash::param;
 
 namespace cash
 {
@@ -49,6 +52,26 @@ float CashVoice::oscillator (int wave, double t, double dt)
             return v;
         }
     }
+}
+
+float CashVoice::shape (int type, float x, float drive)
+{
+    if (drive <= 0.0f)
+        return x;
+    // Up to ~+30 dB into the shaper; fade the wet signal in over the first 25 %
+    // so tiny amounts don't jump, and pull the level back so louder != better.
+    const float pre = std::exp (drive * 3.5f);
+    const float in = x * pre;
+    float y;
+    switch (type)
+    {
+        case 1:  y = juce::jlimit (-1.0f, 1.0f, in); break;                                   // hard clip
+        case 2:  y = std::sin (in * juce::MathConstants<float>::halfPi); break;              // wavefold
+        default: y = std::tanh (in); break;                                                   // soft clip
+    }
+    const float wet = juce::jmin (1.0f, drive * 4.0f);
+    const float makeup = 1.0f / (1.0f + drive * 1.5f);
+    return x * (1.0f - wet) + y * wet * makeup * 1.6f;
 }
 
 void CashVoice::Svf::setup (float cutoffHz, float q, double sampleRate)
@@ -154,15 +177,26 @@ void CashVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample,
     const int numChannels = out.getNumChannels();
     const float* lfo = ctx.lfo + (startSample - ctx.lfoBase);
 
+    const float* lfo2 = ctx.lfo2 != nullptr ? ctx.lfo2 + (startSample - ctx.lfoBase) : nullptr;
+    const float mod2 = lfo2 != nullptr ? p.lfo2Amount : 0.0f;
+    auto routed = [&] (int target, float v) { return p.lfo2Target == target ? v * mod2 : 0.0f; };
+
     for (int i = 0; i < numSamples; ++i)
     {
         const float lfoValue = lfo[i];
-        const double ratio = semisToRatio (bendSemis + lfoValue * p.lfoToPitch);
+        const float lfo2Value = lfo2 != nullptr ? lfo2[i] : 0.0f;
+        const float fEnv = filterEnv.getNextSample();
+
+        const float pitchMod = lfoValue * p.lfoToPitch + fEnv * p.pitchEnvSemis
+                             + routed (param2::toPitch, lfo2Value) * mod2 * 12.0f; // amount^2 * 12 st
+        const double ratio = semisToRatio (bendSemis + pitchMod);
         const double d1 = inc1 * ratio, d2 = inc2 * ratio, dSub = incSub * ratio;
+
+        const float osc2Level = p.osc2Level * juce::jmax (0.0f, 1.0f + routed (param2::toOsc2, lfo2Value));
 
         float s = 0.0f;
         if (p.osc1Level > 0.0f)  s += p.osc1Level * oscillator (p.osc1Wave, phase1, d1);
-        if (p.osc2Level > 0.0f)  s += p.osc2Level * oscillator (p.osc2Wave, phase2, d2);
+        if (osc2Level > 0.0f)    s += osc2Level * oscillator (p.osc2Wave, phase2, d2);
         if (p.subLevel > 0.0f)   s += p.subLevel * oscillator (0, phaseSub, dSub);
         if (p.noiseLevel > 0.0f) s += p.noiseLevel * (noise.nextFloat() * 2.0f - 1.0f);
 
@@ -170,17 +204,24 @@ void CashVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample,
         phase2 = advance (phase2, d2);
         phaseSub = advance (phaseSub, dSub);
 
-        const float fEnv = filterEnv.getNextSample();
         const float baseCutoff = cutoff.getNextValue();
         if (--filterCountdown <= 0)
         {
-            const float semis = p.filterEnvAmt * fEnv * envCutoffRange + keySemis + lfoValue * p.lfoToCutoff * lfoCutoffRange;
+            const float semis = p.filterEnvAmt * fEnv * envCutoffRange + keySemis + lfoValue * p.lfoToCutoff * lfoCutoffRange
+                              + routed (param2::toCutoff, lfo2Value) * lfoCutoffRange;
             const float hz = juce::jlimit (20.0f, nyquistSafe, baseCutoff * static_cast<float> (semisToRatio (semis)));
             filter.setup (hz, q, sr);
             filterCountdown = filterUpdateInterval;
         }
 
-        const float y = filter.process (s, p.filterType) * ampEnv.getNextSample() * velGain * voiceGain;
+        float y = filter.process (s, p.filterType);
+
+        const float drive = juce::jlimit (0.0f, 1.0f, p.drive + lfoValue * p.lfoToDrive * 0.5f
+                                                      + routed (param2::toDrive, lfo2Value) * 0.5f);
+        y = shape (p.driveType, y, drive);
+
+        const float tremolo = 1.0f - 0.5f * mod2 * (p.lfo2Target == param2::toAmp ? 1.0f - lfo2Value : 0.0f);
+        y *= ampEnv.getNextSample() * velGain * voiceGain * tremolo;
 
         for (int ch = 0; ch < numChannels; ++ch)
             out.addSample (ch, startSample + i, y);

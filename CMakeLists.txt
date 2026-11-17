@@ -48,9 +48,28 @@ set(CASH_SOURCES
     Source/SynthVoice.cpp
     Source/SynthEngine.cpp
     Source/CashLookAndFeel.cpp
-    Source/AdvancedPanel.cpp)
+    Source/AdvancedPanel.cpp
+    Source/ParameterMap.cpp
+    Source/CashCode.cpp
+    Source/Mutator.cpp
+    Source/Ledger.cpp
+    Source/Vault.cpp
+    Source/Stash.cpp
+    Source/StashBar.cpp
+    Source/BillArt.cpp
+    Source/BillComponents.cpp
+    Source/MoneyTray.cpp
+    Source/SoundPrint.cpp
+    Source/CashMatch.cpp
+    Source/MatchPanel.cpp)
 
 target_sources(CashSynth PRIVATE ${CASH_SOURCES})
+
+# Bill background: greyscale public-domain $100 scan (see CREDITS.md). Tinted in code.
+juce_add_binary_data(CashAssets
+    HEADER_NAME BinaryData.h
+    NAMESPACE   CashAssets
+    SOURCES     Resources/hundred_obverse_gray.jpg)
 target_include_directories(CashSynth PUBLIC Source)
 
 target_compile_definitions(CashSynth PUBLIC
@@ -61,6 +80,8 @@ target_compile_definitions(CashSynth PUBLIC
 target_link_libraries(CashSynth
     PRIVATE
         juce::juce_audio_utils
+        juce::juce_dsp
+        CashAssets
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags)
@@ -83,7 +104,7 @@ if(CASH_BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
 
     enable_testing()
-    set(CASH_TEST_SOURCES Tests/ProcessorTests.cpp Tests/EngineTests.cpp)
+    set(CASH_TEST_SOURCES Tests/ProcessorTests.cpp Tests/EngineTests.cpp Tests/CashTests.cpp Tests/UiTests.cpp Tests/StateTests.cpp Tests/MatchTests.cpp)
     add_executable(CashSynthTests ${CASH_TEST_SOURCES})
     target_link_libraries(CashSynthTests PRIVATE CashSynth Catch2::Catch2WithMain)
     # Reuse the plugin's compiled JUCE code; only borrow its headers and module defines.

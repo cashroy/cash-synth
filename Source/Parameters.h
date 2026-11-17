@@ -45,11 +45,27 @@ namespace cash::param
     inline constexpr const char* velocitySens = "velocitySens";
     inline constexpr const char* masterGain   = "masterGain";
 
+    // M6: drive, LFO 2 with a routable target, pitch envelope. Appended (CashCode v2).
+    inline constexpr const char* driveType   = "driveType";
+    inline constexpr const char* driveAmount = "driveAmount";
+    inline constexpr const char* lfoToDrive  = "lfoToDrive";   // LFO 1 -> drive
+    inline constexpr const char* lfo2Wave    = "lfo2Wave";
+    inline constexpr const char* lfo2Rate    = "lfo2Rate";
+    inline constexpr const char* lfo2Amount  = "lfo2Amount";
+    inline constexpr const char* lfo2Target  = "lfo2Target";
+    inline constexpr const char* pitchEnvAmt = "pitchEnvAmt";  // filter env -> pitch, +/- 24 st
+
     enum Wave { sine = 0, triangle, saw, square };
     enum FilterMode { lowPass = 0, bandPass, highPass };
+    enum DriveType { softClip = 0, hardClip, fold };
+    enum LfoTarget { toCutoff = 0, toPitch, toAmp, toDrive, toOsc2 };
+
+    inline constexpr float pitchEnvRange = 24.0f; // semitones at 100 %
 
     juce::StringArray waveNames();
     juce::StringArray filterNames();
+    juce::StringArray driveNames();
+    juce::StringArray lfoTargetNames();
 
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 }

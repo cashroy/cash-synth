@@ -4,6 +4,8 @@ namespace cash::param
 {
 juce::StringArray waveNames()   { return { "Sine", "Triangle", "Saw", "Square" }; }
 juce::StringArray filterNames() { return { "Low-pass", "Band-pass", "High-pass" }; }
+juce::StringArray driveNames()  { return { "Soft", "Hard", "Fold" }; }
+juce::StringArray lfoTargetNames() { return { "Cutoff", "Pitch", "Amp", "Drive", "Osc 2" }; }
 
 namespace
 {
@@ -103,6 +105,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     addFloat (l, velocitySens, "Velocity Sensitivity", { 0.0f, 1.0f }, 0.7f, percent());
     addFloat (l, masterGain, "Master Gain", { -48.0f, 6.0f }, -6.0f, unit (1, "dB"));
+
+    // M6 additions (append-only, see ParameterMap). All default to "off".
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (driveType), "Drive Type", driveNames(), softClip));
+    addFloat (l, driveAmount, "Drive Amount", { 0.0f, 1.0f }, 0.0f, percent());
+    addFloat (l, lfoToDrive, "LFO to Drive", { 0.0f, 1.0f }, 0.0f, percent());
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (lfo2Wave), "LFO 2 Wave", waveNames(), triangle));
+    addFloat (l, lfo2Rate, "LFO 2 Rate", skewed (0.05f, 20.0f, 2.0f), 0.5f, unit (2, "Hz"));
+    addFloat (l, lfo2Amount, "LFO 2 Amount", { 0.0f, 1.0f }, 0.0f, percent());
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (lfo2Target), "LFO 2 Target", lfoTargetNames(), toCutoff));
+    addFloat (l, pitchEnvAmt, "Pitch Env Amount", { -1.0f, 1.0f }, 0.0f, percent());
 
     return l;
 }

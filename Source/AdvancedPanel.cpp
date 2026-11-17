@@ -18,14 +18,17 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
     addSection (0, "OSC 1", { { osc1Wave, "Wave" }, { osc1Octave, "Octave" }, { osc1Semi, "Semi" }, { osc1Fine, "Fine" }, { osc1Level, "Level" } });
     addSection (0, "OSC 2", { { osc2Wave, "Wave" }, { osc2Octave, "Octave" }, { osc2Semi, "Semi" }, { osc2Fine, "Fine" }, { osc2Level, "Level" } });
     addSection (0, "SUB / NOISE", { { subLevel, "Sub" }, { noiseLevel, "Noise" } });
+    addSection (0, "MASTER", { { velocitySens, "Velocity" }, { masterGain, "Gain" } });
 
     addSection (1, "FILTER", { { filterType, "Type" }, { filterCutoff, "Cutoff" }, { filterReso, "Reso" },
                                { filterEnvAmt, "Env Amt" }, { filterKeyTrack, "Key Track" } });
-    addSection (1, "FILTER ENV", { { fltAttack, "Attack" }, { fltDecay, "Decay" }, { fltSustain, "Sustain" }, { fltRelease, "Release" } });
+    addSection (1, "FILTER / PITCH ENV", { { fltAttack, "Attack" }, { fltDecay, "Decay" }, { fltSustain, "Sustain" },
+                                           { fltRelease, "Release" }, { pitchEnvAmt, "Pitch" } });
+    addSection (1, "DRIVE", { { driveType, "Type" }, { driveAmount, "Amount" }, { lfoToDrive, "LFO 1" } });
 
     addSection (2, "AMP ENV", { { ampAttack, "Attack" }, { ampDecay, "Decay" }, { ampSustain, "Sustain" }, { ampRelease, "Release" } });
-    addSection (2, "LFO", { { lfoWave, "Wave" }, { lfoRate, "Rate" }, { lfoToPitch, "Pitch" }, { lfoToCutoff, "Cutoff" } });
-    addSection (2, "MASTER", { { velocitySens, "Velocity" }, { masterGain, "Gain" } });
+    addSection (2, "LFO 1", { { lfoWave, "Wave" }, { lfoRate, "Rate" }, { lfoToPitch, "Pitch" }, { lfoToCutoff, "Cutoff" } });
+    addSection (2, "LFO 2", { { lfo2Wave, "Wave" }, { lfo2Rate, "Rate" }, { lfo2Amount, "Amount" }, { lfo2Target, "Target" } });
 }
 
 AdvancedPanel::~AdvancedPanel() = default;
@@ -134,7 +137,10 @@ void AdvancedPanel::resized()
                 auto cell = inner.removeFromLeft (cw);
                 c->label.setBounds (cell.removeFromTop (labelHeight));
                 if (c->slider != nullptr)
+                {
+                    c->slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, juce::jmin (80, cell.getWidth() - 6), textBoxHeight);
                     c->slider->setBounds (cell);
+                }
                 else
                     c->combo->setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 6, 100), 26));
             }

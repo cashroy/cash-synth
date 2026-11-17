@@ -4,10 +4,15 @@
 namespace cash
 {
 SynthEngine::SynthEngine (juce::AudioProcessorValueTreeState& state)
+    : SynthEngine (RawLookup ([&state] (const char* id) { return state.getRawParameterValue (id); }))
 {
-    auto bind = [&state] (Raw& r, const char* id)
+}
+
+SynthEngine::SynthEngine (const RawLookup& lookup)
+{
+    auto bind = [&lookup] (Raw& r, const char* id)
     {
-        r.p = state.getRawParameterValue (id);
+        r.p = lookup (id);
         jassert (r.p != nullptr);
     };
 
@@ -42,6 +47,14 @@ SynthEngine::SynthEngine (juce::AudioProcessorValueTreeState& state)
     bind (lfoToCutoff, param::lfoToCutoff);
     bind (velocitySens, param::velocitySens);
     bind (masterGain, param::masterGain);
+    bind (driveType, param::driveType);
+    bind (driveAmount, param::driveAmount);
+    bind (lfoToDrive, param::lfoToDrive);
+    bind (lfo2Wave, param::lfo2Wave);
+    bind (lfo2Rate, param::lfo2Rate);
+    bind (lfo2Amount, param::lfo2Amount);
+    bind (lfo2Target, param::lfo2Target);
+    bind (pitchEnvAmt, param::pitchEnvAmt);
 
     for (int i = 0; i < numVoices; ++i)
         synth.addVoice (new CashVoice (ctx));
@@ -55,6 +68,7 @@ void SynthEngine::prepare (double newSampleRate, int maxBlockSize)
     sampleRate = newSampleRate;
     synth.setCurrentPlaybackSampleRate (newSampleRate);
     lfoBuffer.assign (static_cast<size_t> (juce::jmax (maxBlockSize, 32)), 0.0f);
+    lfo2Buffer.assign (lfoBuffer.size(), 0.0f);
     gain.reset (newSampleRate, 0.02);
     readParameters();
     gain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterGain.get()));
@@ -64,7 +78,11 @@ void SynthEngine::prepare (double newSampleRate, int maxBlockSize)
 void SynthEngine::reset()
 {
     synth.allNotesOff (0, false);
-    lfoPhase = 0.0;
+    lfo1.phase = lfo2.phase = 0.0;
+    // Oscillators free-run between notes; a reset makes renders repeatable (Cash Match relies on it).
+    for (int i = 0; i < synth.getNumVoices(); ++i)
+        if (auto* v = dynamic_cast<CashVoice*> (synth.getVoice (i)))
+            v->resetPhases();
 }
 
 int SynthEngine::getNumActiveVoices() const
@@ -104,18 +122,27 @@ void SynthEngine::readParameters()
     p.lfoToCutoff = lfoToCutoff.get();
     p.velocitySens = velocitySens.get();
 
-    lfoWaveNow = lfoWave.asInt();
-    lfoInc = static_cast<float> (lfoRate.get() / sampleRate);
+    p.driveType = driveType.asInt();
+    p.drive = driveAmount.get();
+    p.lfoToDrive = lfoToDrive.get();
+    p.lfo2Target = lfo2Target.asInt();
+    p.lfo2Amount = lfo2Amount.get();
+    p.pitchEnvSemis = pitchEnvAmt.get() * param::pitchEnvRange;
+
+    lfo1.wave = lfoWave.asInt();
+    lfo1.inc = static_cast<float> (lfoRate.get() / sampleRate);
+    lfo2.wave = lfo2Wave.asInt();
+    lfo2.inc = static_cast<float> (lfo2Rate.get() / sampleRate);
 }
 
-float SynthEngine::nextLfo()
+float SynthEngine::Lfo::next()
 {
-    const double t = lfoPhase;
-    lfoPhase += lfoInc;
-    if (lfoPhase >= 1.0)
-        lfoPhase -= 1.0;
+    const double t = phase;
+    phase += inc;
+    if (phase >= 1.0)
+        phase -= 1.0;
 
-    switch (lfoWaveNow)
+    switch (wave)
     {
         case param::sine:     return static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * t));
         case param::triangle: return static_cast<float> (1.0 - 4.0 * std::abs (t - 0.5));
@@ -137,9 +164,13 @@ void SynthEngine::render (juce::AudioBuffer<float>& buffer, const juce::MidiBuff
     {
         const int n = juce::jmin (chunk, total - start);
         for (int i = 0; i < n; ++i)
-            lfoBuffer[static_cast<size_t> (i)] = nextLfo();
+        {
+            lfoBuffer[static_cast<size_t> (i)] = lfo1.next();
+            lfo2Buffer[static_cast<size_t> (i)] = lfo2.next();
+        }
 
         ctx.lfo = lfoBuffer.data();
+        ctx.lfo2 = lfo2Buffer.data();
         ctx.lfoBase = start;
         synth.renderNextBlock (buffer, midi, start, n);
     }
