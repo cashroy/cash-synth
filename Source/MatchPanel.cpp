@@ -171,14 +171,29 @@ void MatchPanel::sync()
         else if (found && matchWave.getNumSamples() == 0)
             matchWave = m.getBestRender();
         percent = r.percent;
+        parts = r.parts;
+        sectionsOff = r.sectionsOff;
 
         if (searching)
             status = "Shopping around... " + juce::String (r.tried) + " sounds tried";
         else if (found)
-            status = (r.progress >= 1.0f ? "Done: " : "Stopped: ") + juce::String (r.tried) + " sounds tried. HEAR MATCH, then DEPOSIT.";
+        {
+            status = (r.progress >= 1.0f ? "Done: " : "Stopped: ") + juce::String (r.tried) + " sounds tried";
+            if (sectionsOff > 0)
+                status << ", " << sectionsOff << (sectionsOff == 1 ? " section" : " sections") << " switched off";
+            status << ". HEAR MATCH, then DEPOSIT.";
+        }
         repaint();
     }
     updateButtons();
+}
+
+int MatchPanel::getPartPercent (int part) const
+{
+    const auto& m = processor.getMatcher();
+    if (! found || ! m.hasTarget() || part < 0 || part >= analysis::numParts || ! analysis::partApplies (m.getTargetPrint(), part))
+        return -1;
+    return analysis::matchPercent (parts[static_cast<size_t> (part)]);
 }
 
 void MatchPanel::updateButtons()
@@ -196,9 +211,8 @@ void MatchPanel::paintWave (juce::Graphics& g, juce::Rectangle<float> r, const j
     const int n = audio.getNumSamples();
     if (n == 0 || r.getWidth() < 2.0f)
         return;
-    const float peak = juce::jmax (1.0e-6f, audio.getMagnitude (0, 0, n));
+    const float peak = juce::jmax (1.0e-6f, audio.getMagnitude (0, n));
     const int columns = static_cast<int> (r.getWidth());
-    const float* x = audio.getReadPointer (0);
 
     juce::Path outline;
     for (int col = 0; col < columns; ++col)
@@ -206,8 +220,12 @@ void MatchPanel::paintWave (juce::Graphics& g, juce::Rectangle<float> r, const j
         const int a = static_cast<int> (static_cast<juce::int64> (col) * n / columns);
         const int b = juce::jmax (a + 1, static_cast<int> (static_cast<juce::int64> (col + 1) * n / columns));
         float hi = 0.0f;
-        for (int i = a; i < juce::jmin (b, n); ++i)
-            hi = juce::jmax (hi, std::abs (x[i]));
+        for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+        {
+            const float* x = audio.getReadPointer (ch);
+            for (int i = a; i < juce::jmin (b, n); ++i)
+                hi = juce::jmax (hi, std::abs (x[i]));
+        }
         const float h = hi / peak * r.getHeight() * 0.48f;
         const float px = r.getX() + static_cast<float> (col);
         if (filled)
@@ -288,7 +306,7 @@ void MatchPanel::paint (juce::Graphics& g)
         g.drawText ("DROP A SAMPLE HERE", drop.withTrimmedBottom (30.0f), juce::Justification::centred, false);
         g.setFont (art::serif (13.0f));
         g.setColour (inkSoft);
-        g.drawText ("one note, up to 2.5 s  -  WAV, AIFF, FLAC, MP3, OGG  -  or click to browse",
+        g.drawText ("one note, the whole thing up to 10 s  -  WAV, AIFF, FLAC, MP3, OGG  -  or click to browse",
                     drop.withTrimmedTop (40.0f), juce::Justification::centred, false);
     }
 
@@ -305,6 +323,12 @@ void MatchPanel::paint (juce::Graphics& g)
         juce::String line = m.getTargetName() + "    ";
         line << (tp.pitched ? analysis::noteName (tp.midiNote) + " (" + juce::String (tp.f0, 1) + " Hz)" : juce::String ("no clear pitch: matched at C3"))
              << "    " << juce::String (tp.seconds, 2) << " s";
+        // What the analysis heard move.
+        if (tp.vibrato.present()) line << "    vibrato " << juce::String (tp.vibrato.rate, 1) << " Hz";
+        if (tp.tremolo.present()) line << "    tremolo " << juce::String (tp.tremolo.rate, 1) << " Hz";
+        if (tp.wah.present())     line << "    wah " << juce::String (tp.wah.rate, 1) << " Hz";
+        if (std::abs (tp.pitchStart) > 0.3f) line << "    pitch drop " << juce::String (-tp.pitchStart, 1) << " st";
+        if (tp.width > 0.08f)     line << "    stereo";
         g.setFont (art::serif (16.0f, false));
         g.drawText (line, info.reduced (6.0f, 0.0f), juce::Justification::bottomLeft, true);
     }
@@ -320,8 +344,8 @@ void MatchPanel::paint (juce::Graphics& g)
     g.drawText ("MATCH", box.reduced (12.0f, 8.0f), juce::Justification::topLeft, false);
 
     g.setColour (ink);
-    g.setFont (art::mono (64.0f, true));
-    g.drawText (found ? juce::String (percent) + "%" : juce::String ("--%"), box.withTrimmedBottom (30.0f), juce::Justification::centred, false);
+    g.setFont (art::mono (56.0f, true));
+    g.drawText (found ? juce::String (percent) + "%" : juce::String ("--%"), box.withTrimmedTop (44.0f).withTrimmedBottom (30.0f), juce::Justification::centred, false);
 
     // Progress.
     auto bar = box.reduced (16.0f, 0.0f).withHeight (8.0f).withY (box.getBottom() - 26.0f);
@@ -336,23 +360,62 @@ void MatchPanel::paint (juce::Graphics& g)
         const auto text = stampFor (percent, searching);
         const auto col = stampColour (percent, searching).withAlpha (0.8f);
         juce::Graphics::ScopedSaveState save (g);
-        g.addTransform (juce::AffineTransform::rotation (-0.18f, box.getCentreX(), box.getY() + 44.0f));
-        const auto stamp = juce::Rectangle<float> (150.0f, 30.0f).withCentre ({ box.getRight() - 100.0f, box.getY() + 44.0f });
+        g.addTransform (juce::AffineTransform::rotation (-0.18f, box.getCentreX(), box.getY() + 30.0f));
+        const auto stamp = juce::Rectangle<float> (150.0f, 30.0f).withCentre ({ box.getRight() - 95.0f, box.getY() + 30.0f });
         g.setColour (col);
         g.drawRoundedRectangle (stamp, 4.0f, 2.5f);
         g.setFont (art::serif (18.0f, true, 0.2f));
         g.drawText (text, stamp, juce::Justification::centred, false);
     }
 
+    paintParts (g);
+
     // Memo / status.
     g.setColour (ink);
     g.setFont (art::serif (13.0f));
-    g.drawText ("Memo: " + status, amountArea.getX(), amountArea.getBottom() + 8, amountArea.getWidth(), 40,
-                juce::Justification::topLeft, true);
+    g.drawFittedText ("Memo: " + status, memoArea, juce::Justification::topLeft, 3, 0.9f);
 
     // Dark band for the buttons (where a cheque's MICR line would be).
     g.setColour (background);
     g.fillRoundedRectangle (band.toFloat(), 6.0f);
+}
+
+void MatchPanel::paintParts (juce::Graphics& g) const
+{
+    using namespace colours;
+    auto area = partsArea.toFloat();
+    g.setColour (inkSoft);
+    g.setFont (art::serif (10.0f, true, 0.25f));
+    g.drawText ("ITEMISED", area.removeFromTop (14.0f), juce::Justification::centredLeft, false);
+    g.setColour (ink.withAlpha (0.4f));
+    g.drawHorizontalLine (static_cast<int> (area.getY()), area.getX(), area.getRight());
+    area.removeFromTop (4.0f);
+
+    constexpr int columns = 2, rows = (analysis::numParts + 1) / 2;
+    const float gap = 14.0f, cellW = (area.getWidth() - gap) / columns, cellH = area.getHeight() / rows;
+    for (int part = 0; part < analysis::numParts; ++part)
+    {
+        const int col = part / rows, row = part % rows;
+        auto cell = juce::Rectangle<float> (area.getX() + static_cast<float> (col) * (cellW + gap), area.getY() + static_cast<float> (row) * cellH, cellW, cellH).reduced (0.0f, 2.0f);
+        const int pc = getPartPercent (part);
+        const bool applies = ! processor.getMatcher().hasTarget() || analysis::partApplies (processor.getMatcher().getTargetPrint(), part);
+
+        auto line = cell.removeFromTop (cell.getHeight() - 6.0f);
+        g.setColour (ink);
+        g.setFont (art::serif (10.5f, true, 0.12f));
+        g.drawText (analysis::partName (part), line, juce::Justification::centredLeft, false);
+        g.setFont (art::mono (13.0f, true));
+        g.drawText (pc >= 0 ? juce::String (pc) + "%" : juce::String (applies ? "--" : "n/a"), line, juce::Justification::centredRight, false);
+
+        auto bar = cell.withHeight (4.0f).withY (cell.getBottom() - 4.0f);
+        g.setColour (paperShade);
+        g.fillRoundedRectangle (bar, 2.0f);
+        if (pc >= 0)
+        {
+            g.setColour (pc >= 80 ? sealGreen : (pc >= 50 ? shiftInk : ledRed.darker (0.2f)));
+            g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * static_cast<float> (pc) / 100.0f), 2.0f);
+        }
+    }
 }
 
 void MatchPanel::resized()
@@ -370,7 +433,11 @@ void MatchPanel::resized()
     r.removeFromBottom (10);
     dropArea = r;
 
-    amountArea = right.removeFromTop (juce::jmin (200, right.getHeight() - 50));
+    amountArea = right.removeFromTop (juce::jmin (150, right.getHeight() / 2));
+    right.removeFromTop (8);
+    partsArea = right.removeFromTop (juce::jmin (104, right.getHeight() - 40));
+    right.removeFromTop (6);
+    memoArea = right;
 
     auto buttons = band.reduced (12, 10);
     const int w = (buttons.getWidth() - 4 * 12) / 5;

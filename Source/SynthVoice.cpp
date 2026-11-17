@@ -124,6 +124,8 @@ void CashVoice::setSampleRate (double newRate)
 void CashVoice::resetPhases (double offset)
 {
     phase1 = phase2 = phaseSub = offset - std::floor (offset);
+    // Noise too, so an offline render sounds the same on whichever engine makes it (M9: parallel Cash Match).
+    noise.setSeed (0x5EEDC0DEll + static_cast<juce::int64> (offset * 1000.0));
 }
 
 void CashVoice::setUnison (float position, float gain)

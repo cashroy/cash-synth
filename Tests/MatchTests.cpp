@@ -202,10 +202,14 @@ TEST_CASE ("Same patch scores high, different patch scores lower", "[match][anal
     const auto same = cash::analysis::matchPercent (cash::analysis::distance (pa, pb));
     const auto diff = cash::analysis::matchPercent (cash::analysis::distance (pa, pc));
     const auto parts = cash::analysis::distanceParts (pa, pb);
-    INFO ("same " << same << "%, different " << diff << "%; same parts env " << parts.envelope << " spec " << parts.spectrum
-          << " harm " << parts.harmonics << " flat " << parts.flatness << " d " << cash::analysis::distance (pa, pb));
+    juce::String partText;
+    for (int k = 0; k < cash::analysis::numParts; ++k)
+        partText << cash::analysis::partName (k) << " " << parts[static_cast<size_t> (k)] << "  ";
+    INFO ("same " << same << "%, different " << diff << "%; same parts " << partText);
     CHECK (same >= 97);
     CHECK (diff < 60);
+    for (int k = 0; k < cash::analysis::numParts; ++k)
+        CHECK (cash::analysis::matchPercent (parts[static_cast<size_t> (k)]) >= 97);
 }
 
 // ------------------------------------------------------------ matcher

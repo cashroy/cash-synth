@@ -4,7 +4,7 @@
 
 namespace cash
 {
-// Plays a mono clip (Cash Match's target or best match) over the synth output.
+// Plays a clip (Cash Match's target or best match; mono or stereo) over the synth output.
 // play/stop on the message thread; mixInto on the audio thread, which only
 // try-locks, so it never waits (it skips a block if the clip is being swapped).
 class PreviewPlayer
@@ -37,7 +37,7 @@ public:
 
         const int len = buffer.getNumSamples();
         const double step = rate / hostRate;
-        const float* src = buffer.getReadPointer (0);
+        const int srcChannels = buffer.getNumChannels();
         for (int i = 0; i < out.getNumSamples(); ++i)
         {
             const int k = static_cast<int> (position);
@@ -47,9 +47,11 @@ public:
                 break;
             }
             const float frac = static_cast<float> (position - k);
-            const float s = (src[k] + (src[k + 1] - src[k]) * frac) * gain;
             for (int ch = 0; ch < out.getNumChannels(); ++ch)
-                out.addSample (ch, i, s);
+            {
+                const float* src = buffer.getReadPointer (juce::jmin (ch, srcChannels - 1));
+                out.addSample (ch, i, (src[k] + (src[k + 1] - src[k]) * frac) * gain);
+            }
             position += step;
         }
     }

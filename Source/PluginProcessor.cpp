@@ -168,8 +168,8 @@ void CashSynthAudioProcessor::previewMatch()
     {
         // Match the target's loudness so the A/B is fair.
         auto level = clip;
-        const float a = matcher.getTargetAudio().getMagnitude (0, 0, matcher.getTargetAudio().getNumSamples());
-        const float b = level.getMagnitude (0, 0, level.getNumSamples());
+        const float a = matcher.getTargetAudio().getMagnitude (0, matcher.getTargetAudio().getNumSamples());
+        const float b = level.getMagnitude (0, level.getNumSamples());
         if (b > 1.0e-6f && a > 0.0f)
             level.applyGain (a / b);
         preview.play (level, cash::SoundPrint::sampleRate);

@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-Milestone 8 (section switches + automation-ready) **done**. Next: milestone 9 (Cash Match v2).
+Milestone 9 (Cash Match v2) **done**. Next: milestone 10 (polish, pluginval, README).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -17,7 +17,7 @@ Milestone 8 (section switches + automation-ready) **done**. Next: milestone 9 (C
 6. [x] Cash Match (+ drive, LFO 2 routing, pitch env)
 7. [x] Lead mode: mono/legato, glide, priority, unison, controllers
 8. [x] Section on/off toggles + automation-ready (smoothing, safe mode switches)
-9. [ ] Cash Match v2: match the whole sample, every part of it (user, 2026-11-17: matches aren't good enough)
+9. [x] Cash Match v2: whole sample, per-part scores, section switches, parallel search
 10. [ ] Polish, pluginval, README
 
 ## Key decisions
@@ -123,6 +123,19 @@ Milestone 8 (section switches + automation-ready) **done**. Next: milestone 9 (C
 - Known: slamming cutoff 20 Hz <-> 20 kHz with resonance makes a resonant "zap" (~5x steady step; tested <= 8x). With reso 0 it's as clean as the rest. Per-sample coefficients didn't change it.
 - Tests that set a param after `prepare` now hear a 15 ms ramp: reset before rendering if a test needs the new value instantly.
 
+## Cash Match v2 (M9)
+- Whole sample up to 10 s (`CashMatcher::maxSeconds`), kept **stereo** (target audio, renders and previews are 2-ch; `PreviewPlayer` plays stereo).
+- `SoundPrint` frame track: hop 10 ms (grows past 4 s, max 400 frames). Per frame: level, pitch (YIN CMNDF from an FFT autocorrelation, window 2048, octave-up guard, outliers snapped to neighbour median, short runs a harmonic off moved back), brightness (log2 centroid). Steady region = first frame within 1 dB of peak +50 ms .. last loud frame before key-up.
+- `findWobble`: quadratic detrend, residual clipped at 3 MAD-sigmas, shortest ACF peak >= 0.8 x strongest (0.7-15 Hz). Gives vibrato (st), tremolo (dB), wah (oct; dropped if it follows the vibrato rate). Plus `width` (side/mid RMS), `pitchStart`/settle, brightness start/settle.
+- f0 = median settled pitch of the frame track (pitch env/vibrato don't pull it).
+- Fixed M6 bug: key-down detection walked back through a flat sustain (held notes read as 0.1 s); now skips the silent tail and needs a clearly falling run.
+- 6 parts (`analysis::Part`): ENVELOPE (level, ~50 ms smoothed), TONE (old spectrum/harmonics/flatness), PITCH (st per loud frame), BRIGHTNESS (~110 ms smoothed), MOVEMENT (wobble depths + rates), WIDTH. Weights 22/30/13/15/10/10 (unpitched: pitch weight to tone/env). Same `matchPercent` per part. Candidates analysed `like` the target (same frames/region).
+- Guess: envelope from smoothed 10 ms level; filter env from brightness drop; pitch env from `pitchStart`; LFO 1 vibrato/wah; LFO 2 tremolo on amp; unison from width; slow wobbles in a wide sample = beating (not LFOs). Sets section switches to only what was heard; returns a `features` mask, `overlay()` lays measured features on any patch (start, defaults, best-so-far).
+- Search: batches scored on a `juce::ThreadPool` (cores-1, max 8, low priority; worker 0 = search thread), deterministic (same seed = same result). Staged polish per part group (env, pitch, brightness, movement, width, tone, switches, rest): all nearby values in parallel, then the winners combined. Tidy pass switches off sections costing <= 0.003 distance. Result has `parts` + `sectionsOff`.
+- Engine: `resetPhases` reseeds voice noise, so a render is the same on any worker's engine.
+- Cheque: amount box shorter, ITEMISED grid (6 parts, % + bar; n/a for pitch on unpitched), memo says how many sections were switched off; info line lists vibrato/tremolo/wah/pitch drop/stereo heard.
+- Results (tests): vibrato+3-voice unison+12 st drop lead 95 % (all parts >= 80); pluck 99 %; Karplus string 87 % (M6: 82 %); plain lead 100 % with 8 sections off.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
@@ -134,7 +147,9 @@ M7 verified 2026-11-17: clean build (-Werror), 60 tests pass, no JUCE assertions
 M8 verified 2026-11-17: clean build (-Werror), 70 tests pass (~26 s), no JUCE assertions, `auval` PASS, front/back snapshots checked by eye (back shows Drive + LFO 2 off).
 - Fixed: the `juce_Slider.cpp:1485` assertion was `RiskDial` passing a negative start angle to `setRotaryParameters` (JUCE wants both angles in [0, 4pi)); now 1.5pi..2.5pi, same dial.
 
+M9 verified 2026-11-17: clean build (-Werror), 78 tests pass (~41 s Debug), no JUCE assertions, `auval` PASS, cheque snapshot checked by eye.
+
 ## Next
-- Try in Logic: automate cutoff/levels/waves/switches and listen for zipper; flip voice mode and unison while holding a chord; old M7 projects and stashes should sound the same.
-- Milestone 9: Cash Match v2: whole sample (not 2.5 s), ~10 ms frames, f0 over time (pitch env/vibrato), modulation detection (LFO/tremolo), brightness curve -> filter env, stereo width -> unison, per-part scores on the cheque, staged fit + multithreaded search. Use the section switches (stop forcing them on in `CashMatcher::search`).
-- Milestone 10: polish (flip animation, lock toggles per knob, maybe multithreaded matching), pluginval, README.
+- Try in Logic: Cash Match on real samples (long pads, stereo chorus, vibrato leads); check CPU while matching during playback.
+- Known limits: very fast pitch drops (< ~50 ms) aren't tracked (46 ms window); unison beating is a real level/brightness wobble so it costs some ENVELOPE/BRIGHTNESS.
+- Milestone 10: polish (flip animation, lock toggles per knob), pluginval, README.
