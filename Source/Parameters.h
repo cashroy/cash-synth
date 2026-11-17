@@ -108,6 +108,18 @@ namespace cash::param
     inline constexpr const char* reverbWidth    = "reverbWidth";
     inline constexpr const char* reverbMix      = "reverbMix";
 
+    // M13: the Mint, Cash Match's resynthesis layer (a sound made from a sample's
+    // measured partials + noise; see Mint.h). Appended (CashCode v7); off by default.
+    inline constexpr const char* mintOn    = "mintOn";
+    inline constexpr const char* mintLevel = "mintLevel";
+    inline constexpr const char* mintNoise = "mintNoise"; // 0..200 % of the measured noise
+    inline constexpr const char* mintTone  = "mintTone";  // -1 darker .. +1 brighter (6 dB/oct tilt)
+    inline constexpr const char* mintSpeed = "mintSpeed"; // 25..400 % playback speed of its timeline
+    inline constexpr const char* mintFine  = "mintFine";  // -100..100 cents (Cash Match sets the sample's own tuning)
+    // M13 polish (CashCode v8): where the timeline starts and how long the held loop is.
+    inline constexpr const char* mintStart = "mintStart"; // 0..100 % into the attack/hold part (0 = the sample's own start)
+    inline constexpr const char* mintLoop  = "mintLoop";  // 10..300 % of the loop Cash Match picked, round its middle (100 % = as picked)
+
     enum Wave { sine = 0, triangle, saw, square };
     enum FilterMode { lowPass = 0, bandPass, highPass };
     enum DriveType { softClip = 0, hardClip, fold };

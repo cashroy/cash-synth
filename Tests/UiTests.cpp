@@ -238,6 +238,10 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
     // M8: show both switch states on the back (on, and dimmed off).
     for (auto* id : { cash::param::lfo2On, cash::param::driveOn })
         rig.p.getState().getParameter (id)->setValueNotifyingHost (0.0f);
+    // M12: a few padlocks shut, and the EFFECTS tab lit by the reverb.
+    for (auto* id : { cash::param::filterCutoff, cash::param::ampRelease, cash::param::osc2Semi })
+        rig.p.getLocks().setLocked (id, true);
+    rig.p.getState().getParameter (cash::param::reverbOn)->setValueNotifyingHost (1.0f);
     write (front.getSiblingFile (front.getFileNameWithoutExtension() + "-back.png"));
     // M11: the effects page, delay on (synced), reverb off.
     rig.editor->getBack().getPageTabs().choose (cash::AdvancedPanel::effectsPage);

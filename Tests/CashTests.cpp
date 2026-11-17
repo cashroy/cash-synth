@@ -64,7 +64,11 @@ size_t idx (const char* id)
 }
 
 // v6 (M11). Older codes are checked for back-compat in MatchTests / LeadTests / AutomationTests / TempoTests / EffectsTests.
-const juce::String goldenCode = "$D4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SK75-TM";
+const juce::String goldenCode = "$H4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-01W6-M";
+// v7 (M13), before Mint Start / Loop: must still decode to today's default sound.
+const juce::String goldenCodeV7 = "$F4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2021-AG";
+// The default patch's code before M13 added the Mint (v6): must still decode, Mint off.
+const juce::String goldenCodeV6 = "$D4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SK75-TM";
 constexpr float continuousTolerance = 0.5f / 255.0f + 1.0e-6f;
 }
 
@@ -165,8 +169,23 @@ TEST_CASE ("CashCode format is pinned", "[cashcode]")
     Plugin pl;
     const auto code = cash::CashCode::encode (cash::defaultPatch (pl.p.getState()));
     CHECK (code.startsWithChar ('$'));
-    CHECK (code.removeCharacters ("$-").length() == 90);
+    CHECK (code.removeCharacters ("$-").length() == 101);
     CHECK (code == goldenCode);
+
+    // v6 (M11) codes still decode: the Mint params come from the fallback (off).
+    const auto v6 = cash::CashCode::decode (goldenCodeV6, cash::defaultPatch (pl.p.getState()));
+    REQUIRE (v6.has_value());
+    CHECK (cash::samePatch (*v6, cash::defaultPatch (pl.p.getState()), continuousTolerance));
+
+    // v7 (M13) codes still decode: Mint Start / Loop come from the fallback, exactly.
+    const auto v7 = cash::CashCode::decode (goldenCodeV7, cash::defaultPatch (pl.p.getState()));
+    REQUIRE (v7.has_value());
+    CHECK (cash::samePatch (*v7, cash::defaultPatch (pl.p.getState()), continuousTolerance));
+    for (auto* id : { cash::param::mintStart, cash::param::mintLoop })
+    {
+        const auto k = static_cast<size_t> (cash::ParameterMap::indexOf (id));
+        CHECK ((*v7)[k] == cash::defaultPatch (pl.p.getState())[k]);
+    }
 }
 
 TEST_CASE ("CashCode tolerates hand typing", "[cashcode]")
@@ -372,7 +391,9 @@ TEST_CASE ("Mutations stay playable in real units", "[mutator]")
         cash::applyPatch (pl.p.getState(), out);
         INFO ("seed " << seed << " " << cash::CashCode::encode (out));
 
-        CHECK (juce::jmax (pl.real (osc1Level), pl.real (osc2Level), pl.real (subLevel)) >= 0.35f);
+        const bool minted = pl.real (mintOn) > 0.5f && pl.real (mintLevel) >= 0.35f; // M13: the Mint is a source of its own
+        if (! minted)
+            CHECK (juce::jmax (pl.real (osc1Level), pl.real (osc2Level), pl.real (subLevel)) >= 0.35f);
         const int mode = juce::roundToInt (pl.real (filterType));
         const float cutoff = pl.real (filterCutoff);
         if (mode == lowPass)  CHECK (cutoff >= 300.0f);

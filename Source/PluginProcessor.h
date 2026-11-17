@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "SynthEngine.h"
 #include "Ledger.h"
@@ -9,6 +10,7 @@
 #include "Stash.h"
 #include "CashMatch.h"
 #include "PreviewPlayer.h"
+#include "ParamLocks.h"
 
 class CashSynthAudioProcessor final : public juce::AudioProcessor
 {
@@ -45,9 +47,15 @@ public:
 
     // Money moves (message thread). Each records to the ledger, so it can be undone.
     cash::Patch getPatch() const { return cash::capturePatch (state); }
-    void setPatch (const cash::Patch&, const juce::String& memo);
-    void invest (const cash::Investment&, const cash::LockMask& locks = {});
-    void hitJackpot (uint64_t seed, const cash::LockMask& locks = {});
+    // `mint` (M13) swaps in the Mint model the patch plays; omitted = keep the current one.
+    void setPatch (const cash::Patch&, const juce::String& memo, std::optional<cash::MintRef> mint = std::nullopt);
+
+    // M13: the Mint model the synth plays when MINT is on (from Cash Match, a stash, the vault or the project).
+    cash::MintRef getMint() const { return mint; }
+    // Locked knobs (getLocks) are always left alone; `extra` locks more for this move only.
+    void invest (const cash::Investment&, const cash::LockMask& extra = {});
+    void hitJackpot (uint64_t seed, const cash::LockMask& extra = {});
+    cash::ParamLocks& getLocks() { return locks; }
     bool undo();
     bool redo();
     const cash::Ledger& getLedger() const { return ledger; }
@@ -106,6 +114,7 @@ private:
     cash::ScopeBuffer scope;
     float risk = 0.5f;
     cash::Stash stash;
+    cash::ParamLocks locks;
     juce::String stashName;
     cash::Patch stashPatch {};
     juce::CriticalSection vaultLock; // getStateInformation may run off the message thread
@@ -115,6 +124,11 @@ private:
     std::atomic<int> lastSigNum { 4 }, lastSigDen { 4 };
     std::atomic<bool> lastPlaying { false };
     cash::CashMatcher matcher { state }; // after `state`: it borrows its parameter ranges
+
+    cash::MintRef mint;                       // what the engine plays (message thread owns it)
+    std::vector<cash::MintRef> retiredMints;  // swapped out, freed once the audio thread let go
+    cash::MintRef stashMint;                  // the model of the last stash saved/loaded
+    void setMint (cash::MintRef);
 
     void recordHandTweaks();
     void openBooks(); // clears the ledger and records the current sound as the opening balance

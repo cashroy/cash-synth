@@ -371,7 +371,7 @@ void BillFront::resized()
 }
 
 //============================================================================== BillBack
-BillBack::BillBack (juce::AudioProcessorValueTreeState& state) : advanced (state)
+BillBack::BillBack (juce::AudioProcessorValueTreeState& state, ParamLocks* locks) : advanced (state, locks)
 {
     addAndMakeVisible (advanced);
     addAndMakeVisible (tabs);
@@ -393,5 +393,94 @@ void BillBack::resized()
     tabs.setBounds (titleRow.removeFromLeft (170).reduced (0, 1)); // left of the centred title
     inner.removeFromTop (4);
     advanced.setBounds (inner);
+}
+}
+
+//============================================================================== FlipCard
+namespace cash
+{
+namespace
+{
+    constexpr int flipMargin = 16; // room round the bill for the lift and the shadow
+}
+
+FlipCard::FlipCard()
+{
+    setInterceptsMouseClicks (true, false);
+    setVisible (false);
+}
+
+void FlipCard::start (juce::Component& from, juce::Component& to)
+{
+    finish();
+    const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (from.getScreenBounds());
+    const float scale = juce::jlimit (1.0f, 3.0f, static_cast<float> (display != nullptr ? display->scale : 1.0)
+                                                      * juce::Component::getApproximateScaleFactorForComponent (&from));
+    from.setVisible (true);
+    fromImage = from.createComponentSnapshot (from.getLocalBounds(), true, scale);
+    to.setVisible (true);
+    toImage = to.createComponentSnapshot (to.getLocalBounds(), true, scale);
+    from.setVisible (false);
+    to.setVisible (false);
+    target = &to;
+
+    setBounds (from.getBounds().expanded (flipMargin));
+    progress = 0.0f;
+    startMs = juce::Time::getMillisecondCounterHiRes();
+    setVisible (true);
+    toFront (false);
+    startTimerHz (60);
+}
+
+void FlipCard::finish()
+{
+    stopTimer();
+    if (auto* t = target.getComponent())
+        t->setVisible (true);
+    target = nullptr;
+    fromImage = {};
+    toImage = {};
+    setVisible (false);
+    if (auto* parent = getParentComponent())
+        parent->repaint();
+}
+
+void FlipCard::timerCallback()
+{
+    progress = static_cast<float> (juce::jlimit (0.0, 1.0, (juce::Time::getMillisecondCounterHiRes() - startMs) / durationMs));
+    if (progress >= 1.0f)
+        finish();
+    else
+        repaint();
+}
+
+void FlipCard::paint (juce::Graphics& g)
+{
+    if (fromImage.isNull() || toImage.isNull())
+        return;
+
+    // Ease in and out, turn through half a circle: the bill narrows to its edge,
+    // the other side comes round. It lifts (a touch taller, shadow further away)
+    // and darkens as it stands edge-on to the light.
+    const float e = progress * progress * (3.0f - 2.0f * progress);
+    const float angle = e * juce::MathConstants<float>::pi;
+    const float squash = std::abs (std::cos (angle));
+    const float lift = std::sin (angle);
+
+    const auto bill = getLocalBounds().reduced (flipMargin).toFloat();
+    const float w = juce::jmax (1.0f, bill.getWidth() * squash);
+    const float h = bill.getHeight() * (1.0f + 0.035f * lift);
+    const auto card = juce::Rectangle<float> (w, h).withCentre (bill.getCentre());
+
+    g.setColour (juce::Colours::black.withAlpha (0.45f - 0.15f * lift));
+    g.fillRoundedRectangle (card.translated (3.0f + 7.0f * lift, 5.0f + 9.0f * lift), 8.0f);
+
+    const auto& image = e < 0.5f ? fromImage : toImage;
+    g.drawImage (image, card, juce::RectanglePlacement::stretchToFit);
+    g.setColour (juce::Colours::black.withAlpha (0.4f * lift));
+    g.fillRoundedRectangle (card, 8.0f);
+    // The edge catching the light as it comes round.
+    g.setColour (colours::gold.withAlpha (0.5f * lift));
+    g.drawRoundedRectangle (card.reduced (0.5f), 8.0f, 1.0f);
 }
 }

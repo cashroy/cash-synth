@@ -562,7 +562,7 @@ TEST_CASE ("Cash Match leaves the effects off", "[m11][match]")
     REQUIRE (res.found);
     CHECK (res.patch[at (delayOn)] == 0.0f);
     CHECK (res.patch[at (reverbOn)] == 0.0f);
-    for (int i = cash::ParameterMap::numParamsV5; i < cash::ParameterMap::numParams; ++i)
+    for (int i = cash::ParameterMap::numParamsV5; i < cash::ParameterMap::numParamsV6; ++i)
         if (i != static_cast<int> (at (delayOn)) && i != static_cast<int> (at (reverbOn)))
             CHECK (res.patch[static_cast<size_t> (i)] == start[static_cast<size_t> (i)]); // left alone
 }

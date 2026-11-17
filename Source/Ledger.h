@@ -3,6 +3,7 @@
 #include <deque>
 #include <optional>
 #include "ParameterMap.h"
+#include "Mint.h"
 
 // The Ledger is the patch history: every investment, jackpot or hand tweak is
 // a transaction you can undo and redo. Message thread only.
@@ -13,6 +14,7 @@ struct Transaction
     Patch patch {};
     juce::String memo;  // "Invested 25% @ 50% risk", "Jackpot!", ...
     juce::int64 timeMs = 0;
+    MintRef mint;       // M13: the Mint model this sound plays (if it switches the Mint on)
 };
 
 class Ledger
@@ -25,7 +27,7 @@ public:
     // Appends after the current entry and drops any redo tail. Ignored if the
     // patch equals the current one. Oldest entries go once over capacity.
     // Returns true if something was recorded.
-    bool record (const Patch&, const juce::String& memo, juce::int64 timeMs = juce::Time::currentTimeMillis());
+    bool record (const Patch&, const juce::String& memo, juce::int64 timeMs = juce::Time::currentTimeMillis(), MintRef mint = {});
 
     std::optional<Patch> undo(); // moves back and returns that patch, or nullopt at the start
     std::optional<Patch> redo();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include "Mint.h"
 
 namespace cash
 {
@@ -16,10 +17,12 @@ enum Lane : int
     laneDrive, laneLfo2Amount, lanePitchEnv,    // pitch env in semitones
     laneDetune, laneSpread, laneModVib, laneVelCutoff,
     laneAmpSustain, laneFltSustain,
+    laneMintLevel, laneMintNoise,               // M13 the Mint
 
     // M8 section gates, 0 = off .. 1 = on (ramped, so switching never clicks).
     laneOsc1On, laneOsc2On, laneSubNoiseOn, laneFilterOn, laneFilterEnvOn, laneDriveOn,
     laneLfo2On, // the LFO 2 buffer is gated already; tremolo's "1 - x" form needs the gate itself
+    laneMintOn,
 
     // Choice crossfades: weight of the new choice (0 = all previous, 1 = all new).
     laneOsc1Wave, laneOsc2Wave, laneFilterType, laneDriveType,
@@ -45,6 +48,8 @@ struct SynthParams
     float velocitySens = 0.7f;
     int   driveType = 0, prevDriveType = 0;   // param::DriveType
     float bendRange = 2.0f;                   // semitones at full wheel
+    float mintTone = 0.0f, mintSpeed = 1.0f, mintFine = 0.0f; // M13 (fine in semitones)
+    float mintStart = 0.0f, mintLoop = 1.0f;  // M13 polish: start point (0..1 of the hold part), loop length scale
 };
 
 struct VoiceContext
@@ -57,6 +62,7 @@ struct VoiceContext
     int lfoBase = 0;                 // buffer sample index that index 0 of the chunk arrays is
     float bend = 0.0f;               // pitch wheel, -1..1 (shared by every voice)
     float modWheel = 0.0f;           // CC 1, 0..1
+    const MintModel* mint = nullptr; // M13: the measured sound the Mint plays (owned by the processor)
 };
 
 // One voice. Owned and allocated by SynthEngine (no juce::Synthesiser: it has
@@ -108,6 +114,7 @@ private:
         void setup (float cutoffHz, float q, double sampleRate);
         float process (float in, int mode, int prevMode, float fade); // fade = weight of `mode`
         void reset() { ic1 = ic2 = 0.0f; }
+        void copyCoefficients (const Svf& o) { a1 = o.a1; a2 = o.a2; a3 = o.a3; k = o.k; }
     };
 
     static float oscillator (int wave, double phase, double inc);
@@ -115,11 +122,18 @@ private:
 
     const VoiceContext& ctx;
     double sampleRate = 44100.0;
+
+    // M13: the Mint, rendered a few samples ahead (it works in small blocks).
+    MintPlayer mint;
+    float mintL[MintPlayer::blockSize] {}, mintR[MintPlayer::blockSize] {};
+    int mintAt = 0, mintLen = 0;   // next unread sample / how many are buffered
+    uint32_t mintSeed = 1;
     juce::ADSR ampEnv, filterEnv;
     float ampSustainSet = -1.0f, fltSustainSet = -1.0f;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> cutoff { 4000.0f };
     juce::SmoothedValue<float> unisonPos { 0.0f }, unisonGain { 1.0f };
     Svf filter;
+    Svf filterSide; // M13 polish: the Mint's stereo difference (L-R) gets the same filter (it's linear: = filtering L and R)
     bool filterIdle = false; // the filter was fully bypassed: clear it before it comes back
     juce::Random noise;
 

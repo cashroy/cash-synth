@@ -9,7 +9,7 @@ namespace
 }
 
 CashSynthAudioProcessorEditor::CashSynthAudioProcessorEditor (CashSynthAudioProcessor& p)
-    : AudioProcessorEditor (&p), processor (p), front (p), back (p.getState()), tray (p), stashBar (p), match (p)
+    : AudioProcessorEditor (&p), processor (p), front (p), back (p.getState(), &p.getLocks()), tray (p), stashBar (p), match (p)
 {
     setLookAndFeel (&lookAndFeel);
     addAndMakeVisible (front);
@@ -17,6 +17,7 @@ CashSynthAudioProcessorEditor::CashSynthAudioProcessorEditor (CashSynthAudioProc
     addAndMakeVisible (tray);
     addAndMakeVisible (stashBar);
     addChildComponent (match);
+    addChildComponent (flipCard);
 
     front.onFlip = back.onFlip = [this] { flip(); };
     front.onMoneyMoved = tray.onMoneyMoved = stashBar.onMoneyMoved = match.onMoneyMoved = [this] { syncFromProcessor(); };
@@ -37,9 +38,9 @@ void CashSynthAudioProcessorEditor::showMatch (bool show)
 {
     if (show == match.isVisible())
         return;
+    flipCard.finish();
     if (show)
     {
-        backBeforeMatch = back.isVisible();
         front.setVisible (false);
         back.setVisible (false);
         match.setVisible (true);
@@ -47,8 +48,8 @@ void CashSynthAudioProcessorEditor::showMatch (bool show)
     else
     {
         match.setVisible (false);
-        back.setVisible (backBeforeMatch);
-        front.setVisible (! backBeforeMatch);
+        back.setVisible (flipped);
+        front.setVisible (! flipped);
     }
 }
 
@@ -61,10 +62,21 @@ void CashSynthAudioProcessorEditor::filesDropped (const juce::StringArray& files
 void CashSynthAudioProcessorEditor::flip()
 {
     if (match.isVisible())
-        showMatch (false);
-    const bool toBack = ! back.isVisible();
-    back.setVisible (toBack);
-    front.setVisible (! toBack);
+        showMatch (false); // back to the side you were on, then turn it
+    flipCard.finish();
+    flipped = ! flipped;
+    juce::Component& from = flipped ? static_cast<juce::Component&> (front) : back;
+    juce::Component& to = flipped ? static_cast<juce::Component&> (back) : front;
+    if (isShowing())
+    {
+        flipCard.start (from, to);
+        repaint(); // the desk shadow goes while the card draws its own
+    }
+    else
+    {
+        to.setVisible (true);
+        from.setVisible (false);
+    }
 }
 
 void CashSynthAudioProcessorEditor::syncFromProcessor()
@@ -86,8 +98,11 @@ void CashSynthAudioProcessorEditor::paint (juce::Graphics& g)
     g.setGradientFill (juce::ColourGradient (cash::colours::background.darker (0.2f), r.getCentreX(), r.getHeight() * 0.35f,
                                              cash::colours::desk, 0.0f, r.getBottom(), true));
     g.fillAll();
-    g.setColour (juce::Colours::black.withAlpha (0.45f));
-    g.fillRoundedRectangle (front.getBounds().toFloat().translated (3.0f, 5.0f), 8.0f);
+    if (! flipCard.isTurning())
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (front.getBounds().toFloat().translated (3.0f, 5.0f), 8.0f);
+    }
 }
 
 void CashSynthAudioProcessorEditor::resized()

@@ -1,6 +1,7 @@
 #include "AdvancedPanel.h"
 #include "CashLookAndFeel.h"
 #include "Parameters.h"
+#include "ParameterMap.h"
 
 namespace cash
 {
@@ -129,10 +130,64 @@ void AdvancedPanel::RateModeSwitch::paint (juce::Graphics& g)
     g.drawText ("SYNC", right, juce::Justification::centred, false);
 }
 
+//============================================================================== LockToggle
+AdvancedPanel::LockToggle::LockToggle (ParamLocks& l, juce::StringArray paramIds) : locks (l), ids (std::move (paramIds))
+{
+    setTooltip ("Lock: Invest and Jackpot leave this knob alone");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setRepaintsOnMouseActivity (true);
+}
+
+void AdvancedPanel::LockToggle::toggle()
+{
+    const bool lock = ! isLocked();
+    for (const auto& id : ids)
+        locks.setLocked (id, lock);
+}
+
+void AdvancedPanel::LockToggle::mouseDown (const juce::MouseEvent&)
+{
+    toggle();
+}
+
+void AdvancedPanel::LockToggle::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    // A tiny padlock: struck in gold when locked, a faint open outline when not.
+    const bool locked = isLocked();
+    const auto r = getLocalBounds().toFloat().reduced (1.0f);
+    const auto body = r.withTrimmedTop (r.getHeight() * 0.45f);
+    const float sw = body.getWidth() * 0.62f;
+    const auto shackle = juce::Rectangle<float> (sw, r.getHeight() * 0.62f)
+                             .withCentre ({ body.getCentreX(), r.getY() + r.getHeight() * 0.31f })
+                             .translated (0.0f, locked ? 0.0f : -1.5f);
+    juce::Path loop;
+    loop.startNewSubPath (shackle.getX(), body.getY());
+    loop.lineTo (shackle.getX(), shackle.getY() + sw * 0.5f);
+    loop.addCentredArc (shackle.getCentreX(), shackle.getY() + sw * 0.5f, sw * 0.5f, sw * 0.5f, 0.0f,
+                        -juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi);
+    loop.lineTo (shackle.getRight(), locked ? body.getY() : body.getY() - 2.5f);
+
+    const auto colour = locked ? gold : goldDim.withAlpha (isMouseOver() ? 0.9f : 0.45f);
+    g.setColour (colour);
+    g.strokePath (loop, juce::PathStrokeType (1.3f));
+    if (locked)
+    {
+        g.fillRoundedRectangle (body, 1.5f);
+        g.setColour (knobBody);
+        g.fillEllipse (juce::Rectangle<float> (2.0f, 2.0f).withCentre (body.getCentre()));
+    }
+    else
+    {
+        g.drawRoundedRectangle (body.reduced (0.5f), 1.5f, 1.0f);
+    }
+}
+
 //============================================================================== PageTabs
 AdvancedPanel::PageTabs::PageTabs (AdvancedPanel& p) : panel (p)
 {
-    setTooltip ("Turn the page: synth controls / effects (delay, reverb)");
+    panel.onEffectsSwitched = [this] { repaint(); };
+    setTooltip ("Turn the page: synth controls / effects (delay, reverb) and the Mint");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     setRepaintsOnMouseActivity (true);
 }
@@ -141,6 +196,14 @@ void AdvancedPanel::PageTabs::choose (int newPage)
 {
     panel.setPage (newPage);
     repaint();
+}
+
+bool AdvancedPanel::PageTabs::isEffectsLit() const
+{
+    for (const auto* id : { param::delayOn, param::reverbOn })
+        if (const auto* v = panel.state.getRawParameterValue (id); v != nullptr && v->load() > 0.5f)
+            return true;
+    return false;
 }
 
 void AdvancedPanel::PageTabs::mouseDown (const juce::MouseEvent& e)
@@ -174,6 +237,22 @@ void AdvancedPanel::PageTabs::paint (juce::Graphics& g)
     g.drawText ("SYNTH", left, juce::Justification::centred, false);
     g.setColour (fx ? knobBody : text.withAlpha (0.6f));
     g.drawText ("EFFECTS", right, juce::Justification::centred, false);
+
+    // M12: a lit dot after "EFFECTS" while delay or reverb is on, so you can tell
+    // from the synth page.
+    if (isEffectsLit())
+    {
+        const float textW = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), "EFFECTS");
+        const float d = 6.0f;
+        const auto dot = juce::Rectangle<float> (d, d).withCentre ({ juce::jmin (right.getCentreX() + textW * 0.5f + 7.0f, right.getRight() - radius),
+                                                                      right.getCentreY() });
+        g.setColour (ledGreen.withAlpha (0.35f));
+        g.fillEllipse (dot.expanded (2.5f));
+        g.setColour (ledGreen);
+        g.fillEllipse (dot);
+        g.setColour (knobBody.withAlpha (0.8f));
+        g.drawEllipse (dot, 0.8f);
+    }
 }
 
 void AdvancedPanel::setPage (int newPage)
@@ -189,8 +268,15 @@ void AdvancedPanel::setPage (int newPage)
         onPageChange (page);
 }
 
-AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
+AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s, ParamLocks* l) : state (s), locks (l)
 {
+    if (locks != nullptr)
+        locks->onChange = [this]
+        {
+            for (auto& c : controls)
+                if (c->lock != nullptr)
+                    c->lock->repaint();
+        };
     using namespace param;
     for (auto& pg : pages)
     {
@@ -225,6 +311,10 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
                                             { delayPingPong, "Mode" }, { delayMix, "Mix" } }, delayOn);
     addSection (rowsPerPage + 1, "REVERB", { { reverbSize, "Size" }, { reverbDecay, "Decay" }, { reverbDamp, "Damping" },
                                              { reverbPreDelay, "Pre-Delay" }, { reverbWidth, "Width" }, { reverbMix, "Mix" } }, reverbOn);
+    // M13: the Mint, the sound Cash Match measured from a sample (made by sine partials + noise).
+    addSection (rowsPerPage + 2, "MINT", { { mintLevel, "Level" }, { mintNoise, "Noise" }, { mintTone, "Tone" },
+                                           { mintSpeed, "Speed" }, { mintStart, "Start" }, { mintLoop, "Loop" },
+                                           { mintFine, "Fine" } }, mintOn);
 
     // M10: TIME / SYNC over each LFO rate. M11: and over the delay time and pre-delay.
     addRateSync (lfoRate, lfo1Sync, lfo1Note);
@@ -273,6 +363,12 @@ void AdvancedPanel::addRateSync (const char* rateId, const char* syncId, const c
         c->noteSlider->setVisible (synced);
     });
     parent->addAndMakeVisible (*c->rateMode);
+    if (c->lock != nullptr) // a synced rate is one knob: lock its mode and note too
+    {
+        c->lock->addId (syncId);
+        c->lock->addId (noteId);
+        c->lock->toFront (false);
+    }
 }
 
 int AdvancedPanel::getNumControls() const
@@ -303,7 +399,19 @@ juce::Slider* AdvancedPanel::getKnob (const juce::String& paramId) const
     return nullptr;
 }
 
-AdvancedPanel::~AdvancedPanel() = default;
+AdvancedPanel::~AdvancedPanel()
+{
+    if (locks != nullptr)
+        locks->onChange = nullptr;
+}
+
+AdvancedPanel::LockToggle* AdvancedPanel::getLock (const juce::String& paramId) const
+{
+    for (const auto& c : controls)
+        if (c->paramId == paramId || c->noteId == paramId)
+            return c->lock.get();
+    return nullptr;
+}
 
 void AdvancedPanel::addSection (int row, const juce::String& title, std::initializer_list<std::pair<const char*, const char*>> params,
                                 const char* switchId)
@@ -336,6 +444,13 @@ void AdvancedPanel::addSection (int row, const juce::String& title, std::initial
         else
         {
             c->slider = makeKnob (parent, id, c->sliderAttachment);
+        }
+
+        // M12: a padlock on everything a money move can change (weight > 0).
+        if (const int index = ParameterMap::indexOf (id); locks != nullptr && index >= 0 && ParameterMap::spec (index).weight > 0.0f)
+        {
+            c->lock = std::make_unique<LockToggle> (*locks, juce::StringArray { id });
+            parent.addAndMakeVisible (*c->lock);
         }
 
         section.controls.push_back (c.get());
@@ -372,6 +487,8 @@ void AdvancedPanel::setSectionOn (int row, size_t index, bool on)
         if (c->rateMode != nullptr)   c->rateMode->setAlpha (on ? 1.0f : 0.6f);
     }
     repaint (section.bounds);
+    if (row >= rowsPerPage && onEffectsSwitched)
+        onEffectsSwitched();
 }
 
 AdvancedPanel::SectionSwitch* AdvancedPanel::getSwitch (const juce::String& paramId) const
@@ -420,14 +537,14 @@ void AdvancedPanel::paintSignalPath (juce::Graphics& g)
     // Under the effect rows: an engraved plate showing where the effects sit.
     auto area = getLocalBounds();
     const int rowHeight = (area.getHeight() - rowGap * (rowsPerPage - 1)) / rowsPerPage;
-    area.removeFromTop (2 * (rowHeight + rowGap));
+    area.removeFromTop (3 * (rowHeight + rowGap));
     const auto plate = area.toFloat().reduced (0.0f, 4.0f);
     g.setColour (colours::panel.withAlpha (0.55f));
     g.fillRoundedRectangle (plate, 8.0f);
     g.setColour (colours::panelEdge);
     g.drawRoundedRectangle (plate.reduced (0.5f), 8.0f, 1.0f);
 
-    const juce::StringArray steps { "VOICES", "DELAY", "REVERB", "MASTER GAIN", "OUT" };
+    const juce::StringArray steps { "VOICES + MINT", "DELAY", "REVERB", "MASTER GAIN", "OUT" };
     const float boxW = 130.0f, boxH = 34.0f, arrow = juce::jmax (20.0f, (plate.getWidth() - 60.0f - boxW * 5.0f) / 4.0f);
     float x = plate.getCentreX() - (boxW * 5.0f + arrow * 4.0f) * 0.5f;
     const float y = plate.getCentreY() - boxH * 0.5f - 8.0f;
@@ -453,7 +570,7 @@ void AdvancedPanel::paintSignalPath (juce::Graphics& g)
     }
     g.setColour (colours::text.withAlpha (0.6f));
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("Effects are off on older sounds. Cash Match leaves them off; Jackpot and Invest keep them in the background.",
+    g.drawText ("Cash Match turns the MINT on: it rebuilds the sample from sine partials + noise, played on any key. Effects stay off.",
                 plate.withTop (y + boxH + 8.0f).withHeight (18.0f), juce::Justification::centred, false);
 }
 
@@ -513,6 +630,8 @@ void AdvancedPanel::resized()
                     }
                 if (c->combo != nullptr)
                     c->combo->setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 6, 100), 26));
+                if (c->lock != nullptr)
+                    c->lock->setBounds (cell.getRight() - 13, cell.getY() + 1, 11, 13);
             }
         }
     }

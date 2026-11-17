@@ -19,12 +19,14 @@ struct ParamSpec
 class ParameterMap
 {
 public:
-    static constexpr int numParams = 81;
+    static constexpr int numParams = 89;
     static constexpr int numParamsV1 = 31; // CashCode v1 carried only the first 31
     static constexpr int numParamsV2 = 39; // v2 (M6) the first 39
     static constexpr int numParamsV3 = 50; // v3 (M7) the first 50; v4 (M8) adds the section switches
     static constexpr int numParamsV4 = 60; // v4 the first 60; v5 (M10) adds LFO tempo sync
     static constexpr int numParamsV5 = 64; // v5 the first 64; v6 (M11) adds delay + reverb
+    static constexpr int numParamsV6 = 81; // v6 the first 81; v7 (M13) adds the Mint
+    static constexpr int numParamsV7 = 87; // v7 the first 87; v8 adds Mint Start + Mint Loop
 
     static const std::array<ParamSpec, numParams>& specs();
     static const ParamSpec& spec (int index) { return specs()[static_cast<size_t> (index)]; }
@@ -63,7 +65,10 @@ void allSectionsOn (Patch&);
 // M10: LFO rates back to TIME (Hz). Cash Match works in Hz only.
 void unsync (Patch&);
 
-// M11: delay + reverb (indices numParamsV5 ..). Cash Match leaves them off.
+// M11: delay + reverb (indices numParamsV5 .. numParamsV6 - 1). Cash Match leaves them off.
 bool isEffectParam (int index);
 void effectsOff (Patch&);
+
+// M13: the Mint's params (indices numParamsV6 ..).
+bool isMintParam (int index);
 }

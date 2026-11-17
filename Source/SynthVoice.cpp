@@ -116,6 +116,8 @@ void CashVoice::setSampleRate (double newRate)
     ampEnv.setSampleRate (newRate);
     filterEnv.setSampleRate (newRate);
     cutoff.reset (newRate, 0.02);
+    mint.prepare (newRate);
+    mintAt = mintLen = 0;
     unisonPos.reset (newRate, 0.02);
     unisonGain.reset (newRate, 0.02);
     ampSustainSet = fltSustainSet = -1.0f;
@@ -126,6 +128,7 @@ void CashVoice::resetPhases (double offset)
     phase1 = phase2 = phaseSub = offset - std::floor (offset);
     // Noise too, so an offline render sounds the same on whichever engine makes it (M9: parallel Cash Match).
     noise.setSeed (0x5EEDC0DEll + static_cast<juce::int64> (offset * 1000.0));
+    mintSeed = 1u + static_cast<uint32_t> (offset * 1000.0);
 }
 
 void CashVoice::setUnison (float position, float gain)
@@ -179,10 +182,18 @@ void CashVoice::play (int midiNote, float vel, bool retrigger, float fromPitch, 
     if (! active)
     {
         filter.reset();
+        filterSide.reset();
         filterIdle = false;
         cutoff.setCurrentAndTargetValue (p.cutoffHz);
         phaseSub = phase1; // keep the sub locked to osc 1 at note start
     }
+
+    // M13: the Mint starts its timeline with each new note (legato just moves its pitch).
+    if (ctx.mint != nullptr)
+        mint.start (ctx.mint, mintSeed++, p.mintStart, p.mintLoop);
+    else
+        mint.stop();
+    mintAt = mintLen = 0;
 
     active = true;
     updateEnvelopes (ctx.lane[laneAmpSustain] != nullptr ? ctx.lane[laneAmpSustain][0] : p.ampEnv.sustain,
@@ -197,6 +208,7 @@ void CashVoice::release()
     keyDown = sustained = false;
     ampEnv.noteOff();
     filterEnv.noteOff();
+    mint.release();
 }
 
 void CashVoice::kill()
@@ -204,6 +216,8 @@ void CashVoice::kill()
     keyDown = sustained = false;
     ampEnv.reset();
     filterEnv.reset();
+    mint.stop();
+    mintAt = mintLen = 0;
     active = false;
 }
 
@@ -228,6 +242,16 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
     const float *on1 = lane (laneOsc1On), *on2 = lane (laneOsc2On), *onSub = lane (laneSubNoiseOn);
     const float *onFilter = lane (laneFilterOn), *onFltEnv = lane (laneFilterEnvOn), *onDrive = lane (laneDriveOn);
     const float* onLfo2 = lane (laneLfo2On);
+    const float *mintLevel = lane (laneMintLevel), *mintNoise = lane (laneMintNoise), *onMint = lane (laneMintOn);
+    // A model swapped while this voice played it: stop (the old one may be gone).
+    if (mint.isPlaying() && mint.getModel() != ctx.mint)
+    {
+        mint.stop();
+        mintAt = mintLen = 0;
+    }
+    const bool mintOn = mint.isPlaying() && (ctx.moving[laneMintOn] || onMint[0] > 0.0f);
+    if (! mintOn)
+        filterSide.reset(); // no stereo difference this chunk: start clean when the Mint comes back
     const float *wave1X = lane (laneOsc1Wave), *wave2X = lane (laneOsc2Wave), *typeX = lane (laneFilterType), *driveX = lane (laneDriveType);
     const float *toCutoff = lane (laneToCutoff), *toPitch = lane (laneToPitch), *toAmp = lane (laneToAmp);
     const float *toDrive = lane (laneToDrive), *toOsc2 = lane (laneToOsc2);
@@ -286,7 +310,28 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
             return x >= 1.0f ? v : v * x + oscillator (prev, t, dt) * (1.0f - x);
         };
 
-        float s = 0.0f;
+        float s = 0.0f, side = 0.0f;
+        if (mintOn)
+        {
+            if (mintAt >= mintLen)
+            {
+                mintLen = juce::jmin (static_cast<int> (MintPlayer::blockSize), numSamples - i);
+                std::fill (mintL, mintL + mintLen, 0.0f);
+                std::fill (mintR, mintR + mintLen, 0.0f);
+                MintPlayer::Settings ms;
+                ms.semitones = pitch + detuneSemis + bendSemis + pitchMod + p.mintFine - ctx.mint->rootNote;
+                ms.noise = mintNoise[i];
+                ms.tilt = p.mintTone;
+                ms.speed = p.mintSpeed;
+                ms.loop = p.mintLoop;
+                mint.render (mintL, mintR, mintLen, ms);
+                mintAt = 0;
+            }
+            const float g = mintLevel[i] * onMint[i];
+            s += g * 0.5f * (mintL[mintAt] + mintR[mintAt]);
+            side = g * 0.5f * (mintL[mintAt] - mintR[mintAt]);
+            ++mintAt;
+        }
         if (osc1Level > 0.0f)  s += osc1Level * wave (p.osc1Wave, p.prevOsc1Wave, wave1X[i], phase1, d1);
         if (osc2Level > 0.0f)  s += osc2Level * wave (p.osc2Wave, p.prevOsc2Wave, wave2X[i], phase2, d2);
         if (subLevel > 0.0f)   s += subLevel * oscillator (0, phaseSub, dSub);
@@ -306,6 +351,7 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
                 if (filterIdle)
                 {
                     filter.reset(); // fading back in from a clean state
+                    filterSide.reset();
                     filterIdle = false;
                     filterCountdown = 0;
                 }
@@ -316,10 +362,16 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
                                       + lfoValue * lfoCutoff[i] * lfoCutoffRange + lfo2Value * mod2 * toCutoff[i] * lfoCutoffRange;
                     const float hz = juce::jlimit (20.0f, nyquistSafe, baseCutoff * static_cast<float> (semisToRatio (semis)));
                     filter.setup (hz, q, sr);
+                    filterSide.copyCoefficients (filter);
                     filterCountdown = filterUpdateInterval;
                 }
                 const float filtered = filter.process (s, p.filterType, p.prevFilterType, typeX[i]);
                 y = wet >= 1.0f ? filtered : filtered * wet + s * (1.0f - wet);
+                if (mintOn)
+                {
+                    const float sideF = filterSide.process (side, p.filterType, p.prevFilterType, typeX[i]);
+                    side = wet >= 1.0f ? sideF : sideF * wet + side * (1.0f - wet);
+                }
             }
             else
             {
@@ -335,22 +387,39 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
             if (wet > 0.0f && drive > 0.0f)
             {
                 const float x = driveX[i];
-                float shaped = shape (p.driveType, y, drive);
-                if (x < 1.0f)
-                    shaped = shaped * x + shape (p.prevDriveType, y, drive) * (1.0f - x);
-                y = wet >= 1.0f ? shaped : shaped * wet + y * (1.0f - wet);
+                auto drive1 = [&] (float in)
+                {
+                    float shaped = shape (p.driveType, in, drive);
+                    if (x < 1.0f)
+                        shaped = shaped * x + shape (p.prevDriveType, in, drive) * (1.0f - x);
+                    return wet >= 1.0f ? shaped : shaped * wet + in * (1.0f - wet);
+                };
+                if (mintOn)
+                {
+                    // Stereo: shape left and right (mid +/- side) on their own, as two
+                    // channels through a drive would; back to mid/side after.
+                    const float l = drive1 (y + side), r = drive1 (y - side);
+                    y = 0.5f * (l + r);
+                    side = 0.5f * (l - r);
+                }
+                else
+                {
+                    y = drive1 (y);
+                }
             }
         }
 
         const float tremolo = 1.0f - 0.5f * mod2 * (toAmp[i] * onLfo2[i]) * (1.0f - lfo2Value);
-        y *= ampEnv.getNextSample() * velGain * voiceGain * unisonGain.getNextValue() * tremolo;
+        const float vca = ampEnv.getNextSample() * velGain * voiceGain * unisonGain.getNextValue() * tremolo;
+        y *= vca;
+        side *= vca; // the Mint's stereo difference (filtered and driven with the mid above)
 
         // Stereo: centre = 1/1 (same as mono), hard side = 0/2, so a mono sum never changes.
         const int at = startSample + i;
         if (numChannels > 1)
         {
-            out.addSample (0, at, y * (1.0f - pan));
-            out.addSample (1, at, y * (1.0f + pan));
+            out.addSample (0, at, y * (1.0f - pan) + side);
+            out.addSample (1, at, y * (1.0f + pan) - side);
         }
         else if (numChannels > 0)
         {

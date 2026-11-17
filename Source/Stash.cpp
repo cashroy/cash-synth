@@ -27,7 +27,7 @@ juce::File Stash::fileFor (const juce::String& name) const
     return folder.getChildFile (legal + extension);
 }
 
-juce::File Stash::save (const juce::String& name, const Patch& patch) const
+juce::File Stash::save (const juce::String& name, const Patch& patch, const MintModel* mint) const
 {
     if (! folder.createDirectory())
         return {};
@@ -38,6 +38,12 @@ juce::File Stash::save (const juce::String& name, const Patch& patch) const
     root.setProperty ("name", nameOf (file), nullptr);
     root.setProperty ("code", CashCode::encode (patch), nullptr);
     root.appendChild (patchToTree (patch, patchType), nullptr);
+    if (mint != nullptr && patch[static_cast<size_t> (ParameterMap::indexOf ("mintOn"))] >= 0.5f)
+    {
+        juce::ValueTree m ("Mint");
+        m.setProperty ("data", mint->toMemory().toBase64Encoding(), nullptr);
+        root.appendChild (m, nullptr);
+    }
 
     const auto xml = root.createXml();
     if (xml == nullptr || ! xml->writeTo (file))
@@ -45,13 +51,20 @@ juce::File Stash::save (const juce::String& name, const Patch& patch) const
     return file;
 }
 
-std::optional<Patch> Stash::load (const juce::File& file, const Patch& fallback)
+std::optional<Patch> Stash::load (const juce::File& file, const Patch& fallback, MintRef* mint)
 {
     const auto xml = juce::XmlDocument::parse (file);
     if (xml == nullptr || ! xml->hasTagName (rootType.toString()))
         return std::nullopt;
 
     const auto root = juce::ValueTree::fromXml (*xml);
+    if (mint != nullptr)
+    {
+        mint->reset();
+        juce::MemoryBlock block;
+        if (const auto m = root.getChildWithName ("Mint"); m.isValid() && block.fromBase64Encoding (m.getProperty ("data").toString()))
+            *mint = MintModel::fromMemory (block.getData(), block.getSize());
+    }
     const auto patch = root.getChildWithName (patchType);
     if (patch.isValid())
         return patchFromTree (patch, fallback);

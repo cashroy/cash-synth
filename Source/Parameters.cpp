@@ -190,6 +190,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     addFloat (l, reverbWidth, "Reverb Width", { 0.0f, 1.0f }, 1.0f, percent());
     addFloat (l, reverbMix, "Reverb Mix", { 0.0f, 1.0f }, 0.2f, percent());
 
+    // M13 the Mint (append-only). Off by default = the M11 sound.
+    l.add (std::make_unique<juce::AudioParameterBool> (pid (mintOn), "Mint On", false));
+    addFloat (l, mintLevel, "Mint Level", { 0.0f, 1.0f }, 0.8f, percent());
+    addFloat (l, mintNoise, "Mint Noise", { 0.0f, 2.0f }, 1.0f, percent());
+    addFloat (l, mintTone, "Mint Tone", { -1.0f, 1.0f }, 0.0f, percent());
+    addFloat (l, mintSpeed, "Mint Speed", skewed (0.25f, 4.0f, 1.0f), 1.0f, percent());
+    addFloat (l, mintFine, "Mint Fine", { -100.0f, 100.0f }, 0.0f, unit (0, "ct"));
+    // M13 polish (append-only, CashCode v8). Defaults = the M13 sound.
+    addFloat (l, mintStart, "Mint Start", { 0.0f, 1.0f }, 0.0f, percent());
+    addFloat (l, mintLoop, "Mint Loop", skewed (0.1f, 3.0f, 1.0f), 1.0f, percent());
+
     return l;
 }
 

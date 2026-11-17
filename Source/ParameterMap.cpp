@@ -111,6 +111,17 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
         { reverbPreNote,  24, true,  0.2f },
         { reverbWidth,    0,  false, 0.2f },
         { reverbMix,      0,  false, 0.2f },
+        // M13 (CashCode v7): the Mint. Only Cash Match switches it on (it needs a
+        // measured sample); money moves may nudge its tone, noise and speed.
+        { mintOn,         2,  false, 0.0f },
+        { mintLevel,      0,  false, 0.1f },
+        { mintNoise,      0,  false, 0.3f },
+        { mintTone,       0,  false, 0.3f },
+        { mintSpeed,      0,  false, 0.15f },
+        { mintFine,       0,  false, 0.0f },
+        // CashCode v8: Mint Start / Loop (Cash Match leaves them at their defaults).
+        { mintStart,      0,  false, 0.1f },
+        { mintLoop,       0,  false, 0.1f },
     } };
     return table;
 }
@@ -139,7 +150,12 @@ void unsync (Patch& p)
 
 bool isEffectParam (int index)
 {
-    return index >= ParameterMap::numParamsV5 && index < ParameterMap::numParams;
+    return index >= ParameterMap::numParamsV5 && index < ParameterMap::numParamsV6;
+}
+
+bool isMintParam (int index)
+{
+    return index >= ParameterMap::numParamsV6 && index < ParameterMap::numParams;
 }
 
 void effectsOff (Patch& p)

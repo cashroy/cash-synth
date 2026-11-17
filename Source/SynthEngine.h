@@ -29,6 +29,17 @@ public:
     // they lock their phase to the song position.
     void render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const tempo::Info& tempo = {});
 
+    // M13: the model the Mint plays (owned by the caller, any thread). A model
+    // stays in use until the audio thread's next block starts; mayBeUsing() says
+    // when it is safe to free a model handed over earlier.
+    void setMint (const MintModel* m) { wantedMint.store (m); }
+    const MintModel* getMint() const { return wantedMint.load(); }
+    bool mayBeUsing (const MintModel* m) const
+    {
+        const auto* u = usedMint.load();
+        return m != nullptr && (u == m || u == busy());
+    }
+
     // M11: delay + reverb after the voices (before the master gain).
     const Effects& getEffects() const { return fx; }
 
@@ -102,6 +113,10 @@ private:
     Raw bendRange, modVibrato, velToCutoff;
     Raw osc1On, osc2On, subNoiseOn, filterOn, filterEnvOn, driveOn, lfo1On, lfo2On, unisonOn, glideOn;
     Raw lfo1Sync, lfo1Note, lfo2Sync, lfo2Note;
+    Raw mintOn, mintLevel, mintNoise, mintTone, mintSpeed, mintFine, mintStart, mintLoop;
+
+    std::atomic<const MintModel*> wantedMint { nullptr }, usedMint { nullptr };
+    const MintModel* busy() const { return reinterpret_cast<const MintModel*> (&usedMint); } // "picking one up now"
 
     tempo::Info hostTempo;       // this block's
     bool wasLocked = false;      // the song position was running last block

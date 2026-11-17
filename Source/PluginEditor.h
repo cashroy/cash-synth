@@ -21,8 +21,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    void flip();
-    bool isFlipped() const { return back.isVisible(); }
+    void flip(); // animated when the editor is on screen (M12), instant otherwise
+    bool isFlipped() const { return flipped; }
+    cash::FlipCard& getFlipCard() { return flipCard; }
     void showMatch (bool show); // the Cash Match cheque over the bill
     bool isShowingMatch() const { return match.isVisible(); }
 
@@ -50,7 +51,8 @@ private:
     cash::MoneyTray tray;
     cash::StashBar stashBar;
     cash::MatchPanel match;
-    bool backBeforeMatch = false;
+    cash::FlipCard flipCard;
+    bool flipped = false;
     juce::TooltipWindow tooltips { this, 600 };
     cash::Patch shownPatch {};
 

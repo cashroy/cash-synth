@@ -2,6 +2,7 @@
 
 #include <vector>
 #include "ParameterMap.h"
+#include "Mint.h"
 
 // The Vault holds patches you chose to keep ("Bank It"). Unlike the Ledger it
 // never forgets on its own: when it's full you shred a note to make room.
@@ -13,6 +14,7 @@ struct BankedNote
     Patch patch {};
     juce::String serial;   // CashCode::serialNumber of the patch
     juce::int64 timeMs = 0;
+    MintRef mint;          // M13: the Mint model it plays (if it switches the Mint on)
 };
 
 class Vault
@@ -24,9 +26,9 @@ public:
 
     // Banks the patch. Returns its index (the existing one if this exact patch
     // is already banked), or -1 if the vault is full.
-    int deposit (const Patch&, juce::int64 timeMs = juce::Time::currentTimeMillis());
+    int deposit (const Patch&, juce::int64 timeMs = juce::Time::currentTimeMillis(), MintRef mint = {});
     bool shred (size_t index);
-    int find (const Patch&) const; // -1 if not banked
+    int find (const Patch&, const MintModel* mint = nullptr) const; // -1 if not banked
 
     const BankedNote& at (size_t index) const { return notes[index]; }
     size_t size() const { return notes.size(); }

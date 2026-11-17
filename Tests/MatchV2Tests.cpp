@@ -257,7 +257,7 @@ TEST_CASE ("Cash Match switches off sections it doesn't need", "[match][v2]")
         CHECK (g[idx (id)] == 0.0f);
     CHECK (g[idx (osc1On)] == 1.0f);
 
-    m.runBlocking (defaults, defaults, 4, { 12, 3, 8, 1 });
+    m.runBlocking (defaults, defaults, 4, { 12, 3, 8, 1, false }); // the synth-knob search (M9)
     const auto res = m.getResult();
     INFO (res.percent << "%, sections off " << res.sectionsOff);
     CHECK (res.percent >= 80);

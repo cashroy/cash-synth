@@ -2,12 +2,14 @@
 
 #include <optional>
 #include "ParameterMap.h"
+#include "Mint.h"
 
 // The Stash: named presets, one small XML file per sound, in a folder the user
 // can open, copy and share. Message thread only.
 //
 //   <CashStash version="1" name="Fat Bass" code="$...">
 //     <Patch osc1Wave="0.333" cutoff="0.62" ... />
+//     <Mint data="(base64)"/>   M13: only when the sound plays a Mint model
 //   </CashStash>
 //
 // `code` is the CashCode, for humans only: loading reads the exact values in Patch.
@@ -29,9 +31,10 @@ public:
     void setFolder (const juce::File& f) { folder = f; }
 
     // Saves (or overwrites a stash with the same name). Returns the file, or {} on failure.
-    juce::File save (const juce::String& name, const Patch&) const;
+    juce::File save (const juce::String& name, const Patch&, const MintModel* mint = nullptr) const;
     // nullopt if the file is missing or isn't a stash. `fallback` fills any missing parameters.
-    static std::optional<Patch> load (const juce::File&, const Patch& fallback);
+    // `mint` (optional) gets the stash's Mint model, or null if it has none.
+    static std::optional<Patch> load (const juce::File&, const Patch& fallback, MintRef* mint = nullptr);
     juce::Array<juce::File> list() const; // sorted by name, case-insensitive
     juce::File fileFor (const juce::String& name) const;
     static juce::String nameOf (const juce::File& f) { return f.getFileNameWithoutExtension(); }

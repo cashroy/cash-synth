@@ -175,7 +175,15 @@ void MatchPanel::sync()
         sectionsOff = r.sectionsOff;
 
         if (searching)
-            status = "Shopping around... " + juce::String (r.tried) + " sounds tried";
+            status = r.tried == 0 ? juce::String ("Minting: measuring every partial of the sample...")
+                                  : "Shopping around... " + juce::String (r.tried) + " sounds tried";
+        else if (found && r.mint != nullptr)
+        {
+            // M13: the synth rebuilds the sample from sine partials + shaped noise.
+            status = (r.progress >= 1.0f ? "Minted: " : "Stopped: ") + juce::String (r.mint->numPartials) + " partials + noise"
+                   + (r.mint->hasLoop() ? ", loops while held" : "") + ", plays on any key.";
+            status << " HEAR MATCH, then DEPOSIT.";
+        }
         else if (found)
         {
             status = (r.progress >= 1.0f ? "Done: " : "Stopped: ") + juce::String (r.tried) + " sounds tried";

@@ -18,7 +18,7 @@ CashSynthAudioProcessor::~CashSynthAudioProcessor()
 void CashSynthAudioProcessor::openBooks()
 {
     ledger.clear();
-    ledger.record (getPatch(), "Opening balance");
+    ledger.record (getPatch(), "Opening balance", juce::Time::currentTimeMillis(), mint);
 }
 
 void CashSynthAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -61,26 +61,42 @@ juce::AudioProcessorEditor* CashSynthAudioProcessor::createEditor()
 // so undo goes back to exactly what you heard.
 void CashSynthAudioProcessor::recordHandTweaks()
 {
-    ledger.record (getPatch(), ledger.size() == 0 ? "Opening balance" : "Hand tweak");
+    ledger.record (getPatch(), ledger.size() == 0 ? "Opening balance" : "Hand tweak", juce::Time::currentTimeMillis(), mint);
 }
 
-void CashSynthAudioProcessor::setPatch (const cash::Patch& patch, const juce::String& memo)
+void CashSynthAudioProcessor::setPatch (const cash::Patch& patch, const juce::String& memo, std::optional<cash::MintRef> newMint)
 {
     recordHandTweaks();
+    if (newMint)
+        setMint (*newMint);
     cash::applyPatch (state, patch);
-    ledger.record (getPatch(), memo);
+    ledger.record (getPatch(), memo, juce::Time::currentTimeMillis(), mint);
 }
 
-void CashSynthAudioProcessor::invest (const cash::Investment& inv, const cash::LockMask& locks)
+void CashSynthAudioProcessor::setMint (cash::MintRef m)
+{
+    if (m == mint)
+        return;
+    if (mint != nullptr)
+        retiredMints.push_back (mint);
+    mint = std::move (m);
+    engine.setMint (mint.get());
+    // Free old models nobody keeps (ledger, vault, stash) once the audio thread has moved on.
+    retiredMints.erase (std::remove_if (retiredMints.begin(), retiredMints.end(),
+                                        [this] (const cash::MintRef& r) { return r.use_count() == 1 && ! engine.mayBeUsing (r.get()); }),
+                        retiredMints.end());
+}
+
+void CashSynthAudioProcessor::invest (const cash::Investment& inv, const cash::LockMask& extra)
 {
     const auto memo = "Invested " + juce::String (juce::roundToInt (inv.amount * 100.0f)) + "% @ "
                       + juce::String (juce::roundToInt (inv.risk * 100.0f)) + "% risk";
-    setPatch (cash::Mutator::invest (getPatch(), inv, locks), memo);
+    setPatch (cash::Mutator::invest (getPatch(), inv, locks.getMask() | extra), memo);
 }
 
-void CashSynthAudioProcessor::hitJackpot (uint64_t seed, const cash::LockMask& locks)
+void CashSynthAudioProcessor::hitJackpot (uint64_t seed, const cash::LockMask& extra)
 {
-    setPatch (cash::Mutator::jackpot (getPatch(), seed, locks), "Jackpot!");
+    setPatch (cash::Mutator::jackpot (getPatch(), seed, locks.getMask() | extra), "Jackpot!");
 }
 
 bool CashSynthAudioProcessor::undo()
@@ -88,6 +104,7 @@ bool CashSynthAudioProcessor::undo()
     recordHandTweaks();
     if (auto patch = ledger.undo())
     {
+        setMint (ledger.current()->mint);
         cash::applyPatch (state, *patch);
         return true;
     }
@@ -105,6 +122,7 @@ bool CashSynthAudioProcessor::redo()
     }
     if (auto patch = ledger.redo())
     {
+        setMint (ledger.current()->mint);
         cash::applyPatch (state, *patch);
         return true;
     }
@@ -127,7 +145,7 @@ bool CashSynthAudioProcessor::canRedo() const
 int CashSynthAudioProcessor::bankIt()
 {
     const juce::ScopedLock sl (vaultLock);
-    return vault.deposit (getPatch());
+    return vault.deposit (getPatch(), juce::Time::currentTimeMillis(), mint);
 }
 
 bool CashSynthAudioProcessor::shred (size_t index)
@@ -141,7 +159,7 @@ bool CashSynthAudioProcessor::withdraw (size_t index)
     if (index >= vault.size())
         return false;
     const auto note = vault.at (index); // copy: setPatch may not touch the vault, but stay safe
-    setPatch (note.patch, "Withdrew " + note.serial);
+    setPatch (note.patch, "Withdrew " + note.serial, note.mint != nullptr ? std::optional<cash::MintRef> (note.mint) : std::nullopt);
     return true;
 }
 
@@ -173,7 +191,8 @@ bool CashSynthAudioProcessor::depositMatch()
         patch[si] = 1.0f;
         patch[static_cast<size_t> (ni)] = cash::ParameterMap::fromStep (cash::ParameterMap::spec (ni), cash::tempo::nearestNote (hz, tempo));
     }
-    setPatch (patch, "Cash Match: " + matcher.getTargetName() + " " + juce::String (r.percent) + "%");
+    setPatch (patch, "Cash Match: " + matcher.getTargetName() + " " + juce::String (r.percent) + "%",
+              r.mint != nullptr ? std::optional<cash::MintRef> (r.mint) : std::nullopt);
     return true;
 }
 
@@ -202,35 +221,39 @@ void CashSynthAudioProcessor::previewMatch()
 juce::File CashSynthAudioProcessor::stashIt (const juce::String& name)
 {
     const auto patch = getPatch();
-    const auto file = stash.save (name, patch);
+    const auto file = stash.save (name, patch, mint.get());
     if (file != juce::File())
     {
         stashName = cash::Stash::nameOf (file);
         stashPatch = patch;
+        stashMint = mint;
     }
     return file;
 }
 
 bool CashSynthAudioProcessor::loadStash (const juce::File& file)
 {
-    const auto patch = cash::Stash::load (file, cash::defaultPatch (state));
+    cash::MintRef stashed;
+    const auto patch = cash::Stash::load (file, cash::defaultPatch (state), &stashed);
     if (! patch)
         return false;
     stashName = cash::Stash::nameOf (file);
-    setPatch (*patch, "Opened stash: " + stashName);
+    setPatch (*patch, "Opened stash: " + stashName, stashed != nullptr ? std::optional<cash::MintRef> (stashed) : std::nullopt);
     stashPatch = getPatch();
+    stashMint = mint;
     return true;
 }
 
 bool CashSynthAudioProcessor::isStashModified() const
 {
-    return stashName.isNotEmpty() && ! cash::samePatch (getPatch(), stashPatch);
+    return stashName.isNotEmpty() && ! cash::mint::sameSound (getPatch(), mint.get(), stashPatch, stashMint.get());
 }
 
 //============================================================================== Project state
 namespace
 {
     const juce::Identifier stateType ("CashSynthState"), vaultType ("Vault"), noteType ("Note"), patchType ("Patch");
+    const juce::Identifier mintsType ("Mints"), mintType ("Mint"); // M13: each model once, referred to by index
 }
 
 void CashSynthAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -240,7 +263,25 @@ void CashSynthAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     root.setProperty ("risk", risk, nullptr);
     root.setProperty ("stash", stashName, nullptr);
     root.setProperty ("stashModified", isStashModified(), nullptr);
+    root.setProperty ("locks", locks.toString(), nullptr); // M12 (older projects: none)
     root.appendChild (state.copyState(), nullptr);
+
+    // M13: Mint models (the current one and the vault's), each saved once.
+    std::vector<const cash::MintModel*> saved;
+    juce::ValueTree mintsTree (mintsType);
+    auto refer = [&] (const cash::MintRef& m) -> int
+    {
+        if (m == nullptr)
+            return -1;
+        if (const auto it = std::find (saved.begin(), saved.end(), m.get()); it != saved.end())
+            return static_cast<int> (it - saved.begin());
+        saved.push_back (m.get());
+        juce::ValueTree t (mintType);
+        t.setProperty ("data", m->toMemory().toBase64Encoding(), nullptr);
+        mintsTree.appendChild (t, nullptr);
+        return static_cast<int> (saved.size()) - 1;
+    };
+    root.setProperty ("mint", refer (mint), nullptr);
 
     juce::ValueTree vaultTree (vaultType);
     {
@@ -250,11 +291,13 @@ void CashSynthAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
             const auto& note = vault.at (i);
             juce::ValueTree n (noteType);
             n.setProperty ("time", note.timeMs, nullptr);
+            n.setProperty ("mint", refer (note.mint), nullptr);
             n.appendChild (cash::patchToTree (note.patch, patchType), nullptr);
             vaultTree.appendChild (n, nullptr);
         }
     }
     root.appendChild (vaultTree, nullptr);
+    root.appendChild (mintsTree, nullptr);
 
     if (const auto xml = root.createXml())
         copyXmlToBinary (*xml, destData);
@@ -292,9 +335,24 @@ void CashSynthAudioProcessor::setStateInformation (const void* data, int sizeInB
     }
     state.replaceState (filled);
 
+    std::vector<cash::MintRef> models;
+    for (const auto& t : root.getChildWithName (mintsType))
+    {
+        juce::MemoryBlock block;
+        models.push_back (t.hasType (mintType) && block.fromBase64Encoding (t.getProperty ("data").toString())
+                              ? cash::MintModel::fromMemory (block.getData(), block.getSize()) : nullptr);
+    }
+    auto model = [&models] (const juce::var& index) -> cash::MintRef
+    {
+        const int i = index.isVoid() ? -1 : static_cast<int> (index);
+        return i >= 0 && i < static_cast<int> (models.size()) ? models[static_cast<size_t> (i)] : nullptr;
+    };
+    setMint (model (root.getProperty ("mint")));
+
     if (root.hasType (stateType))
     {
         setRisk (static_cast<float> (root.getProperty ("risk", 0.5f)));
+        locks.fromString (root.getProperty ("locks").toString());
 
         const auto fallback = cash::defaultPatch (state);
         {
@@ -303,11 +361,12 @@ void CashSynthAudioProcessor::setStateInformation (const void* data, int sizeInB
             for (const auto& n : root.getChildWithName (vaultType))
                 if (n.hasType (noteType))
                     vault.deposit (cash::patchFromTree (n.getChildWithName (patchType), fallback),
-                                   static_cast<juce::int64> (n.getProperty ("time", 0)));
+                                   static_cast<juce::int64> (n.getProperty ("time", 0)), model (n.getProperty ("mint")));
         }
 
         stashName = root.getProperty ("stash").toString();
         stashPatch = getPatch();
+        stashMint = mint;
         if (static_cast<bool> (root.getProperty ("stashModified", false)))
             stashPatch.fill (-1.0f); // keep showing "modified" after reload
     }

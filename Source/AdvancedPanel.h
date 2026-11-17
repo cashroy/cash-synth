@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "ParamLocks.h"
 
 namespace cash
 {
@@ -10,7 +11,8 @@ namespace cash
 class AdvancedPanel final : public juce::Component
 {
 public:
-    explicit AdvancedPanel (juce::AudioProcessorValueTreeState& state);
+    // `locks` = null: no padlocks (a panel without a processor).
+    explicit AdvancedPanel (juce::AudioProcessorValueTreeState& state, ParamLocks* locks = nullptr);
     ~AdvancedPanel() override;
 
     void paint (juce::Graphics&) override;
@@ -51,6 +53,24 @@ public:
         bool synced = false;
     };
 
+    // M12: a small padlock in the corner of every knob that money moves can change.
+    // Locked = Invest and Jackpot leave it alone (a synced rate locks its TIME/SYNC
+    // switch and note value with it).
+    class LockToggle final : public juce::Component, public juce::SettableTooltipClient
+    {
+    public:
+        LockToggle (ParamLocks&, juce::StringArray ids);
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        bool isLocked() const { return locks.isLocked (ids[0]); }
+        void toggle();
+        void addId (const juce::String& id) { ids.add (id); }
+
+    private:
+        ParamLocks& locks;
+        juce::StringArray ids;
+    };
+
     // M11: the back of the bill has two pages: the synth (4 rows) and the effects
     // (DELAY, REVERB). Same row height on both, so every knob keeps its size.
     enum Page { synthPage = 0, effectsPage = 1 };
@@ -67,6 +87,7 @@ public:
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void choose (int page);
+        bool isEffectsLit() const; // M12: delay or reverb is on (a lit dot on EFFECTS)
 
     private:
         AdvancedPanel& panel;
@@ -78,6 +99,8 @@ public:
     RateModeSwitch* getRateMode (const juce::String& syncParamId) const;
     juce::Slider* getKnob (const juce::String& paramId) const; // rate and note knobs included
     float getControlAlpha (const juce::String& paramId) const; // dimmed while its section is off
+    LockToggle* getLock (const juce::String& paramId) const;    // null: not lockable / no locks
+    std::function<void()> onEffectsSwitched; // delay or reverb switched on/off (PageTabs repaints)
 
 private:
     struct Control
@@ -94,6 +117,7 @@ private:
         std::unique_ptr<juce::Slider> noteSlider;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noteAttachment;
         std::unique_ptr<RateModeSwitch> rateMode;
+        std::unique_ptr<LockToggle> lock; // M12
     };
 
     struct Section
@@ -113,6 +137,7 @@ private:
     juce::Component& pageFor (int row) { return pages[static_cast<size_t> (juce::jlimit (0, 1, row / rowsPerPage))]; }
 
     juce::AudioProcessorValueTreeState& state;
+    ParamLocks* locks;
     std::vector<std::unique_ptr<Control>> controls;
     std::vector<std::vector<Section>> rows;
     std::vector<std::unique_ptr<SectionSwitch>> switches;

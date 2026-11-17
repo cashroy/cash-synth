@@ -140,10 +140,33 @@ private:
     VoiceModeSwitch voiceSwitch;
 };
 
+// M12: plays the flip. Shows snapshots of the side going away and the side coming
+// up, turning round the bill's vertical centre line (the real sides are hidden
+// meanwhile, then the new one is shown). Clicks are swallowed while it turns.
+class FlipCard final : public juce::Component, private juce::Timer
+{
+public:
+    FlipCard();
+    void start (juce::Component& from, juce::Component& to); // hides both until done
+    void finish();                                          // jump to the end
+    bool isTurning() const { return isVisible(); }
+    float getProgress() const { return progress; }
+    void paint (juce::Graphics&) override;
+
+    static constexpr double durationMs = 340.0;
+
+private:
+    void timerCallback() override;
+    juce::Image fromImage, toImage;
+    juce::Component::SafePointer<juce::Component> target;
+    double startMs = 0.0;
+    float progress = 0.0f;
+};
+
 class BillBack final : public juce::Component
 {
 public:
-    explicit BillBack (juce::AudioProcessorValueTreeState&);
+    explicit BillBack (juce::AudioProcessorValueTreeState&, ParamLocks* locks = nullptr);
     void paint (juce::Graphics&) override;
     void resized() override;
 

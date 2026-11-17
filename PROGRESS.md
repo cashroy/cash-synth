@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-Milestone 11 (delay + reverb) **done**. Next: milestone 12 (polish, pluginval, README).
+**All milestones done** (2026-11-18). M12 (polish) + M13 polish shipped: pluginval strictness 10 passes (VST3 + AU), README written. Next: ideas only (see Next).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -20,7 +20,8 @@ Milestone 11 (delay + reverb) **done**. Next: milestone 12 (polish, pluginval, R
 9. [x] Cash Match v2: whole sample, per-part scores, section switches, parallel search
 10. [x] Tempo sync: LFO 1/2 rates as Hz or note values, following the host BPM automatically
 11. [x] Delay + reverb after the voices, delay time + pre-delay syncable
-12. [ ] Polish, pluginval, README
+12. [x] Polish: flip animation, knob locks, EFFECTS dot, pluginval, README
+13. [x] Cash Match v3: the Mint (resynthesis from partials + noise)
 
 ## Key decisions
 - Build and test on this Mac (Intel, macOS 26.1); keep the Windows/VS2022 build supported.
@@ -156,6 +157,32 @@ Milestone 11 (delay + reverb) **done**. Next: milestone 12 (polish, pluginval, R
 - UI: back of the bill has pages, SYNTH | EFFECTS plate left of the title (`AdvancedPanel::PageTabs`, pages = transparent child components, same row height so knob sizes match). Effects page: DELAY row, REVERB row (each with ON/OFF and TIME/SYNC), signal-path plate below. Snapshot `Docs/editor-back-fx.png`.
 - Tests (`Tests/EffectsTests.cpp`, 10 cases): echo lands on the note value at 7 BPM/sig combos (<= 2 samples), TIME ignores tempo, clamp; feedback halves, ping-pong L then R, tone; reverb RT60 1 s / 3 s decay rates, dies away, width 0 = L==R, pre-delay TIME/SYNC, wet level; mix 0 = bit-identical dry; v5 code / M10 project / stash load off + golden render; max feedback/decay and wild automation stay finite; jackpot/invest caps; Cash Match leaves effects off; effects page UI.
 
+## The Mint (M13, Cash Match v3)
+- Why (user, 2026-11-17): matches "weren't even close". Asked for any instrument at >= 95 % and for the synth to *make* the sound, not play the sample. Baseline on 12 real Logic/GarageBand samples: cheque avg 84 %, but 5-23 dB off on a mel spectrogram (piano 58 %). 2 oscillators + filter can't reach a flute or piano however well the knobs are searched.
+- `Mint.h/.cpp`: `mint::build` measures a sample into a `MintModel`: up to 128 sine partials (per-frame level L/R, frequency, R-vs-L phase "spread"; hop 128 samples) + noise magnitude in ~38 bands per side + coherence. Pitch = print track + lowest-strong-peak guess per frame (fast kick sweeps), refined from the partials' own phase drift (3 passes); string stiffness B fitted (pianos/guitars); root = median refined pitch of the steady part. Analysis frames ~1 period apart, 4-period windows (variable hop). Partials subtracted exactly (complex amplitude) → residual → noise bands. Loop = print's steady region if it sustains; hold frame = key-up.
+- `MintPlayer` (per voice, real-time safe): sine bank by rotation in 32-sample blocks (skips partials < -100 dB), noise = random-phase 512-pt grains, overlap-add, calibrated once by measuring through the same code. Held past the loop end crossfades back; release before the key-up point crossfades (30 ms) to the sample's release at matched level. Any host rate (frequencies in Hz, noise scaled).
+- **Never plays sample audio**: only oscillators + shaped noise driven by the measured numbers (user's requirement).
+- 6 params appended (81 -> 87, `CashCode::version` 7, 98 chars; v6 decodes Mint off): `mintOn` (weight 0: only Cash Match turns it on), `mintLevel`, `mintNoise` (0-200 %), `mintTone` (+/-6 dB/oct tilt), `mintSpeed` (25-400 %), `mintFine` (+/-100 ct, weight 0). `numParamsV6`, `isMintParam`; `isEffectParam` is now V5..V6.
+- Voice: Mint mid goes through filter/drive like an osc; its side (L-R) skips them, after the amp env. Pitch follows key, bend, LFO, glide, unison detune; `semitones = pitch + mods + fine - rootNote`.
+- Engine holds a raw model pointer (`setMint`); audio thread picks it up per block (busy marker), `mayBeUsing` says when the processor may free an old one. Voices playing a swapped-out model stop.
+- Cash Match default (`MatchBudget::mint = true`): build model → patch with every synth section off, Mint on, amp env open (A 1 ms, S 100 %, R = 3x tail + 0.2 s), fine = sample's tuning off the nearest key → light polish of noise/tone/release (~25 renders, 0.2-7 s Debug). `mint = false` = the M9 knob search (old tests use it).
+- `MintRef` (shared_ptr) rides with the sound: ledger entries, vault notes, stashes (`<Mint data=base64>`), project (`<Mints>` each model once, referenced by index). Same sound = same knobs and (if Mint on) same model. Undo/redo/withdraw/load swap the model too. Saved form: 16-bit log levels/freqs, gzip (~5 KB clap .. ~1.6 MB 7 s bass).
+- `makePlayable`: a Mint at level >= 35 % counts as the source (oscillators stay off).
+- UI: MINT row on the EFFECTS page (switch + Level/Noise/Tone/Speed/Fine); signal plate "VOICES + MINT". Cheque memo: "Minted: N partials + noise, loops while held, plays on any key."
+- Results, 12 real samples (flute, violin, cello pizz, e-bass, guitar, piano, organ, synth pluck/bass/lead, kick, clap): **all 95-100 %, avg 99.4 %**, mel spectrogram 0.1-3.3 dB off (was 5-23). Kick weakest (95 %, very fast sweep). Bench: `CASH_SAMPLES=dir ./build/CashSynthTests "[.realsamples]"` (writes `*.match.wav`), `"[.mintbench]"` (player only), `"[.mintcpu]"`. Samples were converted copies of Logic factory content in the session scratchpad (not in the repo).
+- CPU (Debug, Mint.cpp at -O2): 16 voices x 128 partials (e-bass) = 36 % of a core; flute (33 partials) less.
+- **CPU, Release** (2026-11-18, `build-release`, `[.mintcpu]`, 7.5 s Logic e-bass sample, 128 partials): 16 voices held 5 s render in ~1075 ms = **~21.5 % of one core** (3 runs, 21.4-21.6 %), AMD Ryzen 3 3300X, 44.1 kHz, 512-sample blocks.
+- Known limits: transposing far shifts formants too (chipmunk); bells/very inharmonic sounds get partials only if pitched, else noise; the CashCode can't carry the model (codes of minted sounds need the stash/project).
+
+## Polish (M12) + Mint polish (2026-11-18)
+- Flip: `cash::FlipCard` (BillComponents) animates the bill turning over, only while the editor is on screen; off screen the flip is instant.
+- Locks: a padlock per knob (`Source/ParamLocks.h`, owned by the processor, saved as the `locks` attribute in project state). **Invest and Jackpot always respect locks; Cash Match does not** (it must set every knob to match). **Section switches have no padlock.**
+- EFFECTS tab shows a lit dot while delay or reverb is on (`PageTabs::isEffectsLit`).
+- Mint stereo: its side (L-R) now gets a second SVF with the same coefficients (filter is linear, so = filtering L and R) and drive shapes L and R separately when the Mint plays. Mint off = the old path exactly (golden renders pass).
+- 2 params appended (87 -> 89, `CashCode::version` 8, 101 chars; v7 decodes with defaults): `mintStart` (0-100 % of the way to the key-up frame; past the loop end it wraps into the loop) and `mintLoop` (10-300 % of the picked loop's length, round its middle, clamped to [0, key-up], min 30 ms; within 0.1 % of 100 % = the exact picked frames). Loop is live (resizes mid-note), Start is read at note-on. Weights 0.1; Cash Match leaves both at defaults. Knobs in the MINT row (Level, Noise, Tone, Speed, Start, Loop, Fine).
+- Tests: `Tests/PolishTests.cpp` (5), plus 3 in MintTests (stereo through filter/drive, Start/Loop, big-model project state: 10 s 128-partial bass = 3.2 MB state, save ~0.6 s / load ~0.35 s Debug, re-save byte-identical).
+- pluginval 1.0.4, strictness 10, `--validate-in-process`: **SUCCESS** for VST3 and AU. Only note: AU "Current program is -1" warning (one unnamed program; harmless). pluginval only exercises the default patch (Mint off): big-model state + Mint CPU are covered by our own test/bench.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
@@ -170,6 +197,8 @@ M8 verified 2026-11-17: clean build (-Werror), 70 tests pass (~26 s), no JUCE as
 M9 verified 2026-11-17: clean build (-Werror), 78 tests pass (~41 s Debug), no JUCE assertions, `auval` PASS, cheque snapshot checked by eye.
 M10 verified 2026-11-17: clean build (-Werror), 87 tests pass (~24 s), no JUCE assertions, `auval` PASS, back snapshot checked by eye.
 M11 verified 2026-11-17: clean build (-Werror), 97 tests pass (~33 s), no JUCE assertions, `auval` PASS, effects-page snapshot checked by eye.
+M13 verified 2026-11-17: clean build (-Werror), 110 tests pass (incl. 8 Mint cases), no JUCE assertions, `auval` PASS, effects-page snapshot (MINT row) checked by eye.
+M12 + Mint polish verified 2026-11-18: clean build (-Werror), 113 tests pass, `auval` PASS, pluginval strictness 10 PASS (VST3 + AU), snapshots regenerated (MINT row has 7 knobs).
 
 ## Plan: tempo sync + effects (asked 2026-11-17)
 - LFO part done in M10 (see above). M11: delay time and reverb pre-delay get the same TIME/SYNC switch and note list (`tempo::noteQuarters`).
@@ -183,8 +212,9 @@ M11 verified 2026-11-17: clean build (-Werror), 97 tests pass (~33 s), no JUCE a
 - Tests: rate = BPM-derived Hz for each note value at several BPMs incl. odd time signatures; phase locked to PPQ; BPM change mid-note is smooth; old codes/projects load unsynced; delay echo lands at the synced time; reverb tail decays, mix 0 = dry, effects off = bit-identical to M9 renders (golden renders).
 
 ## Next
+- Try Cash Match v3 in Logic on your own samples (flute, bass, etc.): HEAR SAMPLE vs HEAR MATCH, DEPOSIT, play other keys, hold long notes.
+- Ideas: formant-preserving transposition for far keys; inharmonic (bell) partial tracking.
 - Try in Logic: Cash Match on real samples (long pads, stereo chorus, vibrato leads); check CPU while matching during playback.
 - Known limits: very fast pitch drops (< ~50 ms) aren't tracked (46 ms window); unison beating is a real level/brightness wobble so it costs some ENVELOPE/BRIGHTNESS.
 - Try in Logic: synced LFOs at a few tempos, start/stop/loop, odd time signatures.
 - Try in Logic: delay at a few tempos (synced echoes on the grid), reverb tails, bounce end (tail length), CPU with both on.
-- Milestone 12: polish (flip animation, lock toggles per knob, maybe a lit dot on the EFFECTS tab when one is on), pluginval, README.

@@ -6,6 +6,7 @@
 #include "Mutator.h"
 #include "SoundPrint.h"
 #include "SynthEngine.h"
+#include "Mint.h"
 
 // Cash Match (M6, v2 in M9): drop in a sample, and a background search finds the
 // patch that sounds closest. The match % (and a score per part) is shown on a
@@ -21,6 +22,7 @@ public:
 
     // One note at SoundPrint::sampleRate, stereo, full velocity.
     void render (const Patch&, int midiNote, double holdSeconds, double totalSeconds, juce::AudioBuffer<float>& out);
+    void setMint (const MintModel* m) { engine.setMint (m); } // M13: the model a Mint patch plays
 
 private:
     std::array<juce::RangedAudioParameter*, ParameterMap::numParams> params {};
@@ -34,6 +36,9 @@ struct MatchBudget
     int generations = 14;  // invest rounds around the best few
     int children = 12;     // tries per round
     int polishRounds = 2;  // knob-by-knob fine tuning passes
+    // M13: measure the sample into a Mint model and play that (sine partials +
+    // noise made by the synth). False = the M9 search over the synth's own knobs only.
+    bool mint = true;
 };
 
 class CashMatcher final : private juce::Thread
@@ -67,6 +72,7 @@ public:
         float distance = 1.0f;
         analysis::Parts parts {};  // per part, 0 = identical (analysis::matchPercent for a %)
         int sectionsOff = 0;       // section switches the match turned off
+        std::shared_ptr<const MintModel> mint; // M13: the measured sound the patch plays (null: synth knobs only)
         int tried = 0;
         float progress = 0.0f; // 0..1
         bool found = false;
@@ -75,8 +81,14 @@ public:
     juce::AudioBuffer<float> getBestRender() const; // stereo, SoundPrint::sampleRate
 
     // Scores one patch against the target (not while a search runs).
+    // A Mint patch is scored with the model of the last search (or none).
     float score (const Patch&);
     analysis::Parts scoreParts (const Patch&);
+
+    // M13: the target measured into a Mint model (built on first use, then kept with the target).
+    std::shared_ptr<const MintModel> getMintModel();
+    // The patch that plays `model` like the target: every synth section off, the Mint on.
+    Patch mintPatch (const Patch& defaults, const MintModel&) const;
 
     int getNumWorkers() const { return numWorkers; }
 
@@ -102,6 +114,8 @@ private:
 
     void run() override;
     void search();
+    void searchMint();
+    void useMint (const MintModel*); // on every worker's renderer
     void ensureWorkers();
     Eval evaluate (Worker&, const Patch&, juce::AudioBuffer<float>* keep = nullptr);
     std::vector<Eval> evaluateBatch (const std::vector<Patch>&); // in parallel, results in order
@@ -117,6 +131,7 @@ private:
 
     const juce::AudioProcessorValueTreeState& ranges;
     Target target;
+    std::shared_ptr<const MintModel> targetMint; // measured from `target` (search thread or message thread, never both)
 
     const int numWorkers;
     std::vector<std::unique_ptr<Worker>> workers;  // [0] runs on the search thread itself

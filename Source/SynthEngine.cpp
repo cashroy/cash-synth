@@ -81,6 +81,14 @@ SynthEngine::SynthEngine (const RawLookup& lookup)
     bind (lfo1Note, param::lfo1Note);
     bind (lfo2Sync, param::lfo2Sync);
     bind (lfo2Note, param::lfo2Note);
+    bind (mintOn, param::mintOn);
+    bind (mintLevel, param::mintLevel);
+    bind (mintNoise, param::mintNoise);
+    bind (mintTone, param::mintTone);
+    bind (mintSpeed, param::mintSpeed);
+    bind (mintFine, param::mintFine);
+    bind (mintStart, param::mintStart);
+    bind (mintLoop, param::mintLoop);
 
     for (int i = 0; i < numVoices; ++i)
         voices.push_back (std::make_unique<CashVoice> (ctx));
@@ -220,6 +228,14 @@ void SynthEngine::readParameters()
     set (laneFilterEnvOn, gate (filterEnvOn));
     set (laneDriveOn, gate (driveOn));
     set (laneLfo2On, gate (lfo2On));
+    set (laneMintOn, gate (mintOn));
+    set (laneMintLevel, mintLevel.get());
+    set (laneMintNoise, mintNoise.get());
+    p.mintTone = mintTone.get();
+    p.mintSpeed = mintSpeed.get();
+    p.mintFine = mintFine.get() / 100.0f;
+    p.mintStart = mintStart.get();
+    p.mintLoop = mintLoop.get();
 
     priority = notePriority.asInt();
     glideSeconds = glideOn.get() > 0.5f ? glideTime.get() : 0.0f;
@@ -337,6 +353,10 @@ void SynthEngine::fillLanes (int n)
 void SynthEngine::render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const tempo::Info& tempo)
 {
     hostTempo = tempo;
+    // Pick up the Mint model for this whole block (see mayBeUsing).
+    usedMint.store (busy());
+    ctx.mint = wantedMint.load();
+    usedMint.store (ctx.mint);
     readParameters();
 
     // Transport just started, or the host seeked / looped: synced LFOs jump straight

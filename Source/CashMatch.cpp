@@ -271,6 +271,7 @@ juce::String CashMatcher::setTarget (const juce::AudioBuffer<float>& audio, doub
         return "Couldn't hear anything in that file.";
 
     target = std::move (t);
+    targetMint.reset();
     const juce::ScopedLock sl (resultLock);
     result = {};
     bestRender.setSize (0, 0);
@@ -281,6 +282,7 @@ void CashMatcher::clearTarget()
 {
     stop();
     target = {};
+    targetMint.reset();
     const juce::ScopedLock sl (resultLock);
     result = {};
     bestRender.setSize (0, 0);
@@ -330,6 +332,98 @@ void CashMatcher::stop()
 void CashMatcher::run()
 {
     search();
+}
+
+void CashMatcher::useMint (const MintModel* m)
+{
+    ensureWorkers();
+    for (auto& w : workers)
+        w->renderer.setMint (m);
+}
+
+std::shared_ptr<const MintModel> CashMatcher::getMintModel()
+{
+    if (targetMint == nullptr && hasTarget())
+        targetMint = mint::build (target.audio.getReadPointer (0), target.audio.getReadPointer (1), target.audio.getNumSamples(), target.print);
+    return targetMint;
+}
+
+Patch CashMatcher::mintPatch (const Patch& defaults, const MintModel& m) const
+{
+    using namespace param;
+    Patch p = defaults;
+    auto set = [&p] (const char* id, float norm) { p[at (id)] = juce::jlimit (0.0f, 1.0f, norm); };
+    // Only the Mint sounds: every oscillator, the filter, its envelope (and pitch env), drive, LFOs, unison and glide off.
+    for (auto* id : { osc1On, osc2On, subNoiseOn, filterOn, filterEnvOn, driveOn, lfo1On, lfo2On, unisonOn, glideOn })
+        set (id, 0.0f);
+    set (mintOn, 1.0f);
+    // The amp envelope just opens: the Mint carries the sample's own attack, decay and release.
+    set (ampAttack, normalised (ampAttack, 0.001f));
+    set (ampSustain, 1.0f);
+    const double tail = juce::jmax (0.0, m.seconds() - m.holdSeconds());
+    set (ampRelease, normalised (ampRelease, static_cast<float> (juce::jlimit (0.05, 10.0, 3.0 * tail + 0.2))));
+    // Played on the nearest key, tuned to the sample's own pitch (zero MINT FINE to play in tune).
+    set (mintFine, normalised (mintFine, juce::jlimit (-100.0f, 100.0f, (m.rootNote - static_cast<float> (target.print.midiNote)) * 100.0f)));
+    return p;
+}
+
+void CashMatcher::searchMint()
+{
+    expectedEvaluations = 24;
+    const auto model = getMintModel();
+    if (model == nullptr || cancelled())
+        return;
+    useMint (model.get());
+
+    Patch best = mintPatch (defaults0, *model);
+    unsync (best);
+    effectsOff (best);
+    Eval bestE = evaluateBatch ({ best }).front();
+
+    auto publish = [&]
+    {
+        juce::AudioBuffer<float> render;
+        evaluate (*workers[0], best, &render);
+        const juce::ScopedLock sl (resultLock);
+        result.patch = best;
+        result.distance = bestE.d;
+        result.parts = bestE.parts;
+        result.percent = analysis::matchPercent (bestE.d);
+        result.sectionsOff = countOff (best);
+        result.mint = model;
+        result.found = true;
+        bestRender = std::move (render);
+    };
+    publish();
+
+    // Light polish: the Mint's noise and tone, and the amp release over its tail.
+    using namespace param;
+    for (const float delta : { 0.08f, 0.03f })
+    {
+        std::vector<Patch> batch;
+        for (auto* id : { mintNoise, mintTone, ampRelease })
+        {
+            const int i = ParameterMap::indexOf (id);
+            for (float v : variants (i, best[static_cast<size_t> (i)], delta))
+            {
+                batch.push_back (best);
+                batch.back()[static_cast<size_t> (i)] = v;
+            }
+        }
+        if (cancelled())
+            return;
+        const auto evals = evaluateBatch (batch);
+        bool better = false;
+        for (size_t k = 0; k < batch.size(); ++k)
+            if (evals[k].d < bestE.d - 1.0e-4f)
+            {
+                best = batch[k];
+                bestE = evals[k];
+                better = true;
+            }
+        if (better)
+            publish();
+    }
 }
 
 CashMatcher::Result CashMatcher::getResult() const
@@ -623,6 +717,15 @@ Patch CashMatcher::guess (const Patch& defaults, LockMask* features) const
 
 void CashMatcher::search()
 {
+    if (budget.mint)
+    {
+        searchMint();
+        const juce::ScopedLock sl (resultLock);
+        result.progress = 1.0f;
+        return;
+    }
+    useMint (nullptr);
+
     struct Cand
     {
         Patch patch;
@@ -669,6 +772,7 @@ void CashMatcher::search()
         {
             unsync (p);
             effectsOff (p);
+            p[at (param::mintOn)] = 0.0f; // synth knobs only
         }
         const auto evals = evaluateBatch (patches);
         if (cancelled())

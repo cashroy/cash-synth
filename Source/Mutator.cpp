@@ -235,14 +235,16 @@ void Mutator::makePlayable (Patch& p, const LockMask& locks)
     // only as a last resort, when both of their switches are locked off).
     auto isOn = [&p] (const char* id) { return p[at (id)] > 0.5f; };
     auto turnOn = [&] (const char* id) { if (freeId (id)) p[at (id)] = 1.0f; return isOn (id); };
-    if (! isOn (osc1On) && ! isOn (osc2On))
+    // M13: a Mint sound (Cash Match) is a source of its own: leave its oscillators alone.
+    const bool minted = isOn (mintOn) && p[at (mintLevel)] >= 0.35f;
+    if (! minted && ! isOn (osc1On) && ! isOn (osc2On))
         if (! turnOn (osc1On) && ! turnOn (osc2On))
             turnOn (subNoiseOn);
 
     // Something tonal must be audible (only switched-on sources count).
     const bool on1 = isOn (osc1On), on2 = isOn (osc2On), onSub = isOn (subNoiseOn);
     const float tonal = juce::jmax (on1 ? p[at (osc1Level)] : 0.0f, on2 ? p[at (osc2Level)] : 0.0f, onSub ? p[at (subLevel)] : 0.0f);
-    if (tonal < 0.35f)
+    if (tonal < 0.35f && ! minted)
     {
         if (on1 && freeId (osc1Level))        raiseTo (osc1Level, 0.6f);
         else if (on2 && freeId (osc2Level))   raiseTo (osc2Level, 0.6f);
