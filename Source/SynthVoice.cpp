@@ -117,6 +117,7 @@ void CashVoice::setSampleRate (double newRate)
     filterEnv.setSampleRate (newRate);
     cutoff.reset (newRate, 0.02);
     mint.prepare (newRate);
+    layerBank.prepare (newRate);
     mintAt = mintLen = 0;
     unisonPos.reset (newRate, 0.02);
     unisonGain.reset (newRate, 0.02);
@@ -194,6 +195,7 @@ void CashVoice::play (int midiNote, float vel, bool retrigger, float fromPitch, 
     else
         mint.stop();
     mintAt = mintLen = 0;
+    layerBank.start (p.layers, mintSeed); // M14 (envelopes from where they are)
 
     active = true;
     updateEnvelopes (ctx.lane[laneAmpSustain] != nullptr ? ctx.lane[laneAmpSustain][0] : p.ampEnv.sustain,
@@ -209,6 +211,7 @@ void CashVoice::release()
     ampEnv.noteOff();
     filterEnv.noteOff();
     mint.release();
+    layerBank.release();
 }
 
 void CashVoice::kill()
@@ -218,6 +221,7 @@ void CashVoice::kill()
     filterEnv.reset();
     mint.stop();
     mintAt = mintLen = 0;
+    layerBank.kill();
     active = false;
 }
 
@@ -250,7 +254,12 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
         mintAt = mintLen = 0;
     }
     const bool mintOn = mint.isPlaying() && (ctx.moving[laneMintOn] || onMint[0] > 0.0f);
-    if (! mintOn)
+    // M14: the layers (skipped entirely while switched off).
+    const float* onLayers = lane (laneLayersOn);
+    const bool layersOn = ctx.moving[laneLayersOn] || onLayers[0] > 0.0f;
+    const float* layerWaves = layersOn ? layers::tablesFor (ctx.mint) : nullptr;
+    const bool stereo = mintOn || layersOn; // a stereo difference (side) runs through the chain
+    if (! stereo)
         filterSide.reset(); // no stereo difference this chunk: start clean when the Mint comes back
     const float *wave1X = lane (laneOsc1Wave), *wave2X = lane (laneOsc2Wave), *typeX = lane (laneFilterType), *driveX = lane (laneDriveType);
     const float *toCutoff = lane (laneToCutoff), *toPitch = lane (laneToPitch), *toAmp = lane (laneToAmp);
@@ -332,6 +341,13 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
             side = g * 0.5f * (mintL[mintAt] - mintR[mintAt]);
             ++mintAt;
         }
+        if (layersOn)
+        {
+            float lm = 0.0f, ls = 0.0f;
+            layerBank.next (p.layers, layerWaves, pitch + detuneSemis + bendSemis + pitchMod, lfoValue, lfo2Value, lm, ls);
+            s += onLayers[i] * lm;
+            side += onLayers[i] * ls;
+        }
         if (osc1Level > 0.0f)  s += osc1Level * wave (p.osc1Wave, p.prevOsc1Wave, wave1X[i], phase1, d1);
         if (osc2Level > 0.0f)  s += osc2Level * wave (p.osc2Wave, p.prevOsc2Wave, wave2X[i], phase2, d2);
         if (subLevel > 0.0f)   s += subLevel * oscillator (0, phaseSub, dSub);
@@ -367,7 +383,7 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
                 }
                 const float filtered = filter.process (s, p.filterType, p.prevFilterType, typeX[i]);
                 y = wet >= 1.0f ? filtered : filtered * wet + s * (1.0f - wet);
-                if (mintOn)
+                if (stereo)
                 {
                     const float sideF = filterSide.process (side, p.filterType, p.prevFilterType, typeX[i]);
                     side = wet >= 1.0f ? sideF : sideF * wet + side * (1.0f - wet);
@@ -394,7 +410,7 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
                         shaped = shaped * x + shape (p.prevDriveType, in, drive) * (1.0f - x);
                     return wet >= 1.0f ? shaped : shaped * wet + in * (1.0f - wet);
                 };
-                if (mintOn)
+                if (stereo)
                 {
                     // Stereo: shape left and right (mid +/- side) on their own, as two
                     // channels through a drive would; back to mid/side after.

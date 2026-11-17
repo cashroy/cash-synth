@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-**All milestones done** (2026-11-18). M12 (polish) + M13 polish shipped: pluginval strictness 10 passes (VST3 + AU), README written. Next: ideas only (see Next).
+M1-13 shipped (2026-11-18). **M14 LAYERS part 1/2 done** on branch `m14-layers` (2026-11-18, not merged): engine, params, fitting, matcher BOTH mode, minimal cheque switch. Part 2 next (see Next).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -22,6 +22,7 @@
 11. [x] Delay + reverb after the voices, delay time + pre-delay syncable
 12. [x] Polish: flip animation, knob locks, EFFECTS dot, pluginval, README
 13. [x] Cash Match v3: the Mint (resynthesis from partials + noise)
+14. [~] Cash Match LAYERS: editable patch of synth parts (part 1/2 done: engine, fit, matcher, minimal cheque)
 
 ## Key decisions
 - Build and test on this Mac (Intel, macOS 26.1); keep the Windows/VS2022 build supported.
@@ -174,6 +175,17 @@
 - **CPU, Release** (2026-11-18, `build-release`, `[.mintcpu]`, 7.5 s Logic e-bass sample, 128 partials): 16 voices held 5 s render in ~1075 ms = **~21.5 % of one core** (3 runs, 21.4-21.6 %), AMD Ryzen 3 3300X, 44.1 kHz, 512-sample blocks.
 - Known limits: transposing far shifts formants too (chipmunk); bells/very inharmonic sounds get partials only if pitched, else noise; the CashCode can't carry the model (codes of minted sounds need the stash/project).
 
+## LAYERS (M14 part 1, 2026-11-18, branch m14-layers)
+- Why (user): the Mint plays back measurements; LAYERS builds an EDITABLE patch from normal synth parts. Every match makes BOTH (EXACT = today's Mint, LAYERS); the cheque picks which to deposit.
+- `Layers.h/.cpp`: 8 tone layers (one-cycle stereo wavetable, 7 band-limited mips by harmonic count, oct/semi/fine, level, pan, exponential amp ADSR (decay/release = time to -60 dB), own SVF LP/BP/HP + cutoff/reso/env amount + ADSR, cutoff keytracks from C4, LFO 1/2 depth to pitch/level/cutoff), 2 noise layers (band-pass, level/centre/width/ADSR/pan, RMS-normalised), shared pitch env (amount, time), Detail = tone layers on. Per voice in `CashVoice` (after the Mint, before filter/drive/amp; side runs the chain like the Mint's); skipped entirely when off (`laneLayersOn`), so off = bit-identical.
+- 204 params appended (89 -> 293, `CashCode::version` 9, **codes now 404 chars**; v8 decodes layers off). IDs `layersOn`, `layerDetail`, `layerPitchAmt/Time`, `lyrN<Field>`, `lnzN<Field>` (generated, `layers::ids()`). Weight 0: money moves leave them alone; `makePlayable` counts a layer >= 35 % as a source. `ParameterMap::indexOf` is a hash map now.
+- Wavetables are data in a `MintModel` (`layerHarmonics/Phases/Spreads`, tables rebuilt on load): a LAYERS patch carries a tables-only model (~4 KB saved), so ledger/vault/stash/project/undo needed no new plumbing (`mint::usesModel`: Mint or layers on). Model format v2 (v1 still loads).
+- Fit (`layers::fit`, from the MintModel only): partial level curves -> k-means (Detail clusters) on dB curves normalised to each partial's peak, loudest layer first; per layer a fundamental (strongest partial / n, or the root) and harmonic amps; stereo = per-harmonic R phase lead with the measured side/mid energy; ADSR fitted jointly (attack, decay, sustain, gain) in dB; filter env only if brightness moves >= 0.35 oct (cutoff per frame fitted to the harmonic shape, level compensated); noise bands split in two by frequency (Otsu), level calibrated by rendering the Mint's noise vs the layers'; pitch drift of the strongest partials -> pitch env; vibrato -> LFO 1, tremolo (symmetric dB) -> LFO 2, wah -> layer cutoffs on LFO 2 (with tremolo) or 1.
+- Matcher: `MatchBudget::mode` EXACT / LAYERS / BOTH (default), `detail` (8), `refit` (keep the other patch). `Result::exact` / `layered` (top-level = EXACT if made). Short polish (~100 renders): layer levels, top-3 envelopes (times by ratio), noise levels/decays, pitch env. `score()` uses the patch's own model. `getRender (layers)`.
+- Cheque: EXACT nn% | LAYERS nn% buttons + DETAIL 1-8 box (re-fits layers only, from the kept model, ~2-5 s). HEAR MATCH / DEPOSIT use the pick (`setMatchPicksLayers`); memo "Cash Match (layers): ...". Each deposit is its own ledger entry.
+- **Bench** (12 samples, Debug): EXACT avg 99.4 % (1.72 dB mel). **LAYERS Detail 8: avg 92.6 %** (5.20 dB): cello 94, clap 66, ebass 99, flute 98, guitar 99, kick 88, lead 92, organ 98, piano 95, pluck 97, synthbass 91, violin 94. Detail 3: avg 91.7 % (5.55 dB). Match time EXACT+LAYERS 0.6-17 s, Detail re-fit 0.3-5 s.
+- Limits: clap (noise only: 2 band-passes can't draw its spectrum; multi-burst envelope); kick (flat-then-drop envelope: the exponential ADSR can't hold then fall; a decay-curve control would fix it); unison beating is copied as LFO tremolo/wah.
+
 ## Polish (M12) + Mint polish (2026-11-18)
 - Flip: `cash::FlipCard` (BillComponents) animates the bill turning over, only while the editor is on screen; off screen the flip is instant.
 - Locks: a padlock per knob (`Source/ParamLocks.h`, owned by the processor, saved as the `locks` attribute in project state). **Invest and Jackpot always respect locks; Cash Match does not** (it must set every knob to match). **Section switches have no padlock.**
@@ -204,6 +216,7 @@ M10 verified 2026-11-17: clean build (-Werror), 87 tests pass (~24 s), no JUCE a
 M11 verified 2026-11-17: clean build (-Werror), 97 tests pass (~33 s), no JUCE assertions, `auval` PASS, effects-page snapshot checked by eye.
 M13 verified 2026-11-17: clean build (-Werror), 110 tests pass (incl. 8 Mint cases), no JUCE assertions, `auval` PASS, effects-page snapshot (MINT row) checked by eye.
 M12 + Mint polish verified 2026-11-18: clean build (-Werror), 113 tests pass, `auval` PASS, pluginval strictness 10 PASS (VST3 + AU), snapshots regenerated (MINT row has 7 knobs).
+M14 part 1 verified 2026-11-18: clean build (-Werror), 121 tests pass (8 new LAYERS cases), `auval` PASS. "Control for every parameter" checks exclude the 204 LAYERS params until part 2 adds their UI.
 
 ## Plan: tempo sync + effects (asked 2026-11-17)
 - LFO part done in M10 (see above). M11: delay time and reverb pre-delay get the same TIME/SYNC switch and note list (`tempo::noteQuarters`).
@@ -217,6 +230,7 @@ M12 + Mint polish verified 2026-11-18: clean build (-Werror), 113 tests pass, `a
 - Tests: rate = BPM-derived Hz for each note value at several BPMs incl. odd time signatures; phase locked to PPQ; BPM change mid-note is smooth; old codes/projects load unsynced; delay echo lands at the synced time; reverb tail decays, mix 0 = dry, effects off = bit-identical to M9 renders (golden renders).
 
 ## Next
+- **M14 part 2**: LAYERS UI on the bill (layer strip: pick layer 1-8 / noise, its knobs, Detail), wavetable view; Logic check (CPU with 8 layers x 16 voices, automation); ideas: per-layer decay curve (kick), steeper noise bands (clap).
 - Try Cash Match v3 in Logic on your own samples (flute, bass, etc.): HEAR SAMPLE vs HEAR MATCH, DEPOSIT, play other keys, hold long notes.
 - Ideas: formant-preserving transposition for far keys; inharmonic (bell) partial tracking.
 - Try in Logic: Cash Match on real samples (long pads, stereo chorus, vibrato leads); check CPU while matching during playback.

@@ -1,4 +1,5 @@
 #include "Mint.h"
+#include "Layers.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
 #include <complex>
@@ -428,12 +429,34 @@ namespace
     std::complex<float> lerp (std::complex<float> a, std::complex<float> b, float t) { return a + (b - a) * t; }
 }
 
+bool mint::usesModel (const Patch& p)
+{
+    static const auto on = static_cast<size_t> (ParameterMap::indexOf ("mintOn"));
+    static const auto lay = static_cast<size_t> (ParameterMap::indexOf (layers::layersOn));
+    return p[on] >= 0.5f || p[lay] >= 0.5f;
+}
+
 bool mint::sameSound (const Patch& a, const MintModel* ma, const Patch& b, const MintModel* mb)
 {
     if (! samePatch (a, b))
         return false;
-    const auto on = static_cast<size_t> (ParameterMap::indexOf ("mintOn"));
-    return a[on] < 0.5f || ma == mb;
+    return ! usesModel (a) || ma == mb;
+}
+
+std::shared_ptr<const MintModel> mint::tablesOnly (const std::vector<float>& harmonics, const std::vector<float>& phases, const std::vector<float>& spreads)
+{
+    auto m = std::make_shared<MintModel>();
+    m->numFrames = 2;
+    m->numPartials = 0;
+    m->bandHz = { 1000.0f };
+    m->noiseL = m->noiseR = { 0.0f, 0.0f };
+    m->frameLevel = { 0.0f, 0.0f };
+    m->holdFrame = 1;
+    m->layerHarmonics = harmonics;
+    m->layerPhases = phases;
+    m->layerSpreads = spreads;
+    layers::buildTables (m->layerHarmonics, m->layerPhases, m->layerSpreads, m->layerWaves);
+    return m;
 }
 
 //============================================================================== build
@@ -1075,7 +1098,7 @@ void MintPlayer::render (float* left, float* right, int num, const Settings& s)
 namespace
 {
     constexpr juce::uint32 mintMagic = 0x544E494D; // "MINT"
-    constexpr int mintVersion = 1;
+    constexpr int mintVersion = 2; // v2 (M14) appends the layer wavetables
 
     // Levels as 1/1024 octave steps down from 2^0 (0 = silent); frequencies as 1/2048 octave.
     juce::uint16 packAmp (float a) { return a <= 1.0e-7f ? 0 : static_cast<juce::uint16> (juce::jlimit (1, 65535, 1 + juce::roundToInt ((std::log2 (a) + 40.0f) * 1024.0f))); }
@@ -1109,6 +1132,10 @@ juce::MemoryBlock MintModel::toMemory() const
     for (auto v : spread) raw.writeShort (static_cast<short> (juce::jlimit (-32767, 32767, juce::roundToInt (v * 1024.0f))));
     for (auto v : noiseL) raw.writeShort (static_cast<short> (packAmp (v)));
     for (auto v : noiseR) raw.writeShort (static_cast<short> (packAmp (v)));
+    raw.writeInt (static_cast<int> (layerHarmonics.size()));
+    for (auto v : layerHarmonics) raw.writeFloat (v);
+    for (size_t i = 0; i < layerHarmonics.size(); ++i) raw.writeFloat (i < layerPhases.size() ? layerPhases[i] : 0.0f);
+    for (size_t i = 0; i < layerHarmonics.size(); ++i) raw.writeFloat (i < layerSpreads.size() ? layerSpreads[i] : 0.0f);
 
     juce::MemoryOutputStream zipped;
     {
@@ -1127,7 +1154,10 @@ std::shared_ptr<const MintModel> MintModel::fromMemory (const void* data, size_t
     juce::MemoryBlock block;
     gz.readIntoMemoryBlock (block, 64 * 1024 * 1024);
     juce::MemoryInputStream in (block, false);
-    if (block.getSize() < 64 || static_cast<juce::uint32> (in.readInt()) != mintMagic || in.readInt() != mintVersion)
+    if (block.getSize() < 64 || static_cast<juce::uint32> (in.readInt()) != mintMagic)
+        return nullptr;
+    const int version = in.readInt();
+    if (version < 1 || version > mintVersion)
         return nullptr;
 
     auto m = std::make_shared<MintModel>();
@@ -1166,6 +1196,17 @@ std::shared_ptr<const MintModel> MintModel::fromMemory (const void* data, size_t
     {
         v->resize (static_cast<size_t> (nb * T));
         for (auto& x : *v) x = unpackAmp (static_cast<juce::uint16> (in.readShort()));
+    }
+    if (version >= 2)
+    {
+        const int nh = in.readInt();
+        if (nh < 0 || nh > layers::numTone * layers::numHarmonics || in.getNumBytesRemaining() < static_cast<juce::int64> (nh) * 12)
+            return nullptr;
+        floats (m->layerHarmonics, static_cast<size_t> (nh));
+        floats (m->layerPhases, static_cast<size_t> (nh));
+        floats (m->layerSpreads, static_cast<size_t> (nh));
+        if (nh > 0)
+            layers::buildTables (m->layerHarmonics, m->layerPhases, m->layerSpreads, m->layerWaves);
     }
     m->holdFrame = juce::jlimit (1, T - 1, m->holdFrame);
     m->loopStart = juce::jlimit (0, T - 1, m->loopStart);

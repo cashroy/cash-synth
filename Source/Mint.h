@@ -45,6 +45,11 @@ struct MintModel
 
     std::vector<float> frameLevel;    // rough loudness per frame (for the release hand-over)
 
+    // M14 LAYERS: wavetables for the tone layers (harmonic amplitude + phase per
+    // [layer * layers::numHarmonics + h-1]; empty = plain saws) and the band-limited
+    // tables built from them (not saved: rebuilt on load).
+    std::vector<float> layerHarmonics, layerPhases, layerSpreads, layerWaves;
+
     int holdFrame = 0;                // where the key went up in the sample
     int loopStart = 0, loopEnd = 0;   // held notes loop here (loopEnd <= loopStart: no loop)
 
@@ -64,11 +69,16 @@ using MintRef = std::shared_ptr<const MintModel>;
 
 namespace mint
 {
-    // Same sound: same knobs, and (if the Mint is on) the same model.
+    // The patch plays a model's data: the Mint, or (M14) the layers' wavetables.
+    bool usesModel (const Patch&);
+    // Same sound: same knobs, and (if the Mint or the layers are on) the same model.
     bool sameSound (const Patch& a, const MintModel* ma, const Patch& b, const MintModel* mb);
 
     // Measures a sample (stereo, at SoundPrint::sampleRate, starting at its onset).
     // `print` is the sample's SoundPrint (pitch track, key-down time, steady part).
+    // M14: a model that only carries layer wavetables (silent as a Mint).
+    std::shared_ptr<const MintModel> tablesOnly (const std::vector<float>& harmonics, const std::vector<float>& phases, const std::vector<float>& spreads);
+
     std::shared_ptr<const MintModel> build (const float* left, const float* right, int numSamples, const SoundPrint& print);
 }
 

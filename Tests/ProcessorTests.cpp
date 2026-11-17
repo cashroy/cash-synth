@@ -1,3 +1,4 @@
+#include "Layers.h"
 #include <catch2/catch_test_macros.hpp>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
@@ -45,5 +46,5 @@ TEST_CASE ("Editor builds a control for every parameter", "[editor]")
 
     auto* cashEditor = dynamic_cast<CashSynthAudioProcessorEditor*> (editor.get());
     REQUIRE (cashEditor != nullptr);
-    CHECK (cashEditor->getAdvancedPanel().getNumControls() == p.getParameters().size());
+    CHECK (cashEditor->getAdvancedPanel().getNumControls() == p.getParameters().size() - cash::layers::numParams);  // M14: LAYERS controls come in part 2
 }

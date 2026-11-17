@@ -39,6 +39,11 @@ public:
     juce::TextButton& getMatchButton() { return matchIt; }
     juce::TextButton& getDepositButton() { return deposit; }
     juce::TextButton& getCloseButton() { return close; }
+    // M14: EXACT | LAYERS switch (each shows its %) and the layers' Detail (re-fits).
+    juce::TextButton& getExactButton() { return exactPick; }
+    juce::TextButton& getLayersButton() { return layersPick; }
+    juce::ComboBox& getDetailBox() { return detailBox; }
+    void pick (bool layers);
 
     std::function<void()> onClose, onMoneyMoved;
 
@@ -51,7 +56,10 @@ private:
 
     CashSynthAudioProcessor& processor;
     juce::TextButton load_ { "LOAD SAMPLE..." }, hearSample { "HEAR SAMPLE" }, matchIt { "MATCH IT" },
-                     hearMatch { "HEAR MATCH" }, deposit { "DEPOSIT" }, close { "CLOSE" };
+                     hearMatch { "HEAR MATCH" }, deposit { "DEPOSIT" }, close { "CLOSE" },
+                     exactPick { "EXACT" }, layersPick { "LAYERS" };
+    juce::ComboBox detailBox;
+    bool shownLayers = false;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::AudioBuffer<float> matchWave;
     juce::String status;
@@ -60,6 +68,6 @@ private:
     float progress = 0.0f;
     bool searching = false, found = false, dragOver = false;
     uint64_t runs = 0;
-    juce::Rectangle<int> dropArea, amountArea, partsArea, memoArea, infoArea, band;
+    juce::Rectangle<int> pickArea, dropArea, amountArea, partsArea, memoArea, infoArea, band;
 };
 }

@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "Mint.h"
+#include "Layers.h"
 
 namespace cash
 {
@@ -23,6 +24,7 @@ enum Lane : int
     laneOsc1On, laneOsc2On, laneSubNoiseOn, laneFilterOn, laneFilterEnvOn, laneDriveOn,
     laneLfo2On, // the LFO 2 buffer is gated already; tremolo's "1 - x" form needs the gate itself
     laneMintOn,
+    laneLayersOn, // M14
 
     // Choice crossfades: weight of the new choice (0 = all previous, 1 = all new).
     laneOsc1Wave, laneOsc2Wave, laneFilterType, laneDriveType,
@@ -50,6 +52,7 @@ struct SynthParams
     float bendRange = 2.0f;                   // semitones at full wheel
     float mintTone = 0.0f, mintSpeed = 1.0f, mintFine = 0.0f; // M13 (fine in semitones)
     float mintStart = 0.0f, mintLoop = 1.0f;  // M13 polish: start point (0..1 of the hold part), loop length scale
+    layers::Settings layers;                  // M14 LAYERS (gate in laneLayersOn)
 };
 
 struct VoiceContext
@@ -125,6 +128,7 @@ private:
 
     // M13: the Mint, rendered a few samples ahead (it works in small blocks).
     MintPlayer mint;
+    layers::Bank layerBank; // M14
     float mintL[MintPlayer::blockSize] {}, mintR[MintPlayer::blockSize] {};
     int mintAt = 0, mintLen = 0;   // next unread sample / how many are buffered
     uint32_t mintSeed = 1;

@@ -1,4 +1,5 @@
 #include "Mutator.h"
+#include "Layers.h"
 #include "Parameters.h"
 
 namespace cash
@@ -236,7 +237,11 @@ void Mutator::makePlayable (Patch& p, const LockMask& locks)
     auto isOn = [&p] (const char* id) { return p[at (id)] > 0.5f; };
     auto turnOn = [&] (const char* id) { if (freeId (id)) p[at (id)] = 1.0f; return isOn (id); };
     // M13: a Mint sound (Cash Match) is a source of its own: leave its oscillators alone.
-    const bool minted = isOn (mintOn) && p[at (mintLevel)] >= 0.35f;
+    bool minted = isOn (mintOn) && p[at (mintLevel)] >= 0.35f;
+    // M14: so is a LAYERS sound with a layer at a decent level.
+    if (isOn (layers::layersOn))
+        for (int l = 0; l < layers::numTone; ++l)
+            minted = minted || p[at (layers::toneId (l, layers::level))] >= 0.35f;
     if (! minted && ! isOn (osc1On) && ! isOn (osc2On))
         if (! turnOn (osc1On) && ! turnOn (osc2On))
             turnOn (subNoiseOn);

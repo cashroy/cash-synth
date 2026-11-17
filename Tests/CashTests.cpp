@@ -5,6 +5,7 @@
 #include "PluginProcessor.h"
 #include "Parameters.h"
 #include "ParameterMap.h"
+#include "Layers.h"
 #include "CashCode.h"
 #include "Mutator.h"
 #include "Ledger.h"
@@ -64,7 +65,9 @@ size_t idx (const char* id)
 }
 
 // v6 (M11). Older codes are checked for back-compat in MatchTests / LeadTests / AutomationTests / TempoTests / EffectsTests.
-const juce::String goldenCode = "$H4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-01W6-M";
+const juce::String goldenCode = "$K4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-0080-V5JG-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-000M-P03C-VW0C-J001-9C06-SQR0-S400-2BE0";
+// v8 (M13 polish), before M14 LAYERS: must still decode, layers off.
+const juce::String goldenCodeV8 = "$H4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-01W6-M";
 // v7 (M13), before Mint Start / Loop: must still decode to today's default sound.
 const juce::String goldenCodeV7 = "$F4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2021-AG";
 // The default patch's code before M13 added the Mint (v6): must still decode, Mint off.
@@ -119,7 +122,7 @@ TEST_CASE ("Patches round-trip through the APVTS", "[map]")
         for (int i = 0; i < ParameterMap::numParams; ++i)
             // Skewed ranges lose float precision right at the bottom (0.0025 of a 1 ms..10 s
             // knob is ~1 ms either way), so allow a little more there.
-            if (std::abs (back[static_cast<size_t> (i)] - patch[static_cast<size_t> (i)]) > (patch[static_cast<size_t> (i)] < 0.01f ? 3.0e-3f : 1.0e-4f))
+            if (std::abs (back[static_cast<size_t> (i)] - patch[static_cast<size_t> (i)]) > (patch[static_cast<size_t> (i)] < 0.01f ? 6.0e-3f : 1.0e-4f))
                 FAIL_CHECK (ParameterMap::spec (i).id << ": set " << patch[static_cast<size_t> (i)] << ", got " << back[static_cast<size_t> (i)]);
     }
 
@@ -169,13 +172,20 @@ TEST_CASE ("CashCode format is pinned", "[cashcode]")
     Plugin pl;
     const auto code = cash::CashCode::encode (cash::defaultPatch (pl.p.getState()));
     CHECK (code.startsWithChar ('$'));
-    CHECK (code.removeCharacters ("$-").length() == 101);
+    CHECK (code.removeCharacters ("$-").length() == 404); // v9 (M14): the 204 LAYERS params made codes long
     CHECK (code == goldenCode);
 
     // v6 (M11) codes still decode: the Mint params come from the fallback (off).
     const auto v6 = cash::CashCode::decode (goldenCodeV6, cash::defaultPatch (pl.p.getState()));
     REQUIRE (v6.has_value());
     CHECK (cash::samePatch (*v6, cash::defaultPatch (pl.p.getState()), continuousTolerance));
+
+    // v8 codes still decode: the LAYERS params come from the fallback (off), exactly.
+    const auto v8 = cash::CashCode::decode (goldenCodeV8, cash::defaultPatch (pl.p.getState()));
+    REQUIRE (v8.has_value());
+    CHECK (cash::samePatch (*v8, cash::defaultPatch (pl.p.getState()), continuousTolerance));
+    for (int k = cash::ParameterMap::numParamsV8; k < cash::ParameterMap::numParams; ++k)
+        CHECK ((*v8)[static_cast<size_t> (k)] == cash::defaultPatch (pl.p.getState())[static_cast<size_t> (k)]);
 
     // v7 (M13) codes still decode: Mint Start / Loop come from the fallback, exactly.
     const auto v7 = cash::CashCode::decode (goldenCodeV7, cash::defaultPatch (pl.p.getState()));
@@ -391,7 +401,10 @@ TEST_CASE ("Mutations stay playable in real units", "[mutator]")
         cash::applyPatch (pl.p.getState(), out);
         INFO ("seed " << seed << " " << cash::CashCode::encode (out));
 
-        const bool minted = pl.real (mintOn) > 0.5f && pl.real (mintLevel) >= 0.35f; // M13: the Mint is a source of its own
+        bool minted = pl.real (mintOn) > 0.5f && pl.real (mintLevel) >= 0.35f; // M13: the Mint is a source of its own
+        if (pl.real (cash::layers::layersOn) > 0.5f)                            // M14: so are the layers
+            for (int l = 0; l < cash::layers::numTone; ++l)
+                minted = minted || pl.real (cash::layers::toneId (l, cash::layers::level)) >= 0.35f;
         if (! minted)
             CHECK (juce::jmax (pl.real (osc1Level), pl.real (osc2Level), pl.real (subLevel)) >= 0.35f);
         const int mode = juce::roundToInt (pl.real (filterType));

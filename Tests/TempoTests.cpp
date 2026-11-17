@@ -1,3 +1,4 @@
+#include "Layers.h"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include "PluginEditor.h"
@@ -440,7 +441,7 @@ TEST_CASE ("TIME / SYNC toggle on the back of the bill", "[m10][ui]")
     auto* ed = dynamic_cast<CashSynthAudioProcessorEditor*> (editor.get());
     REQUIRE (ed != nullptr);
     auto& panel = ed->getAdvancedPanel();
-    CHECK (panel.getNumControls() == r.p.getParameters().size());
+    CHECK (panel.getNumControls() == r.p.getParameters().size() - cash::layers::numParams); // M14: LAYERS controls come in part 2
 
     for (auto [syncId, rateId, noteId] : { std::tuple { lfo1Sync, lfoRate, lfo1Note }, std::tuple { lfo2Sync, lfo2Rate, lfo2Note } })
     {

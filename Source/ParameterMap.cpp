@@ -1,5 +1,7 @@
 #include "ParameterMap.h"
+#include <unordered_map>
 #include "Parameters.h"
+#include "Layers.h"
 
 namespace cash
 {
@@ -7,7 +9,7 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
 {
     using namespace param;
     // id, steps, ordered, weight
-    static const std::array<ParamSpec, numParams> table { {
+    static const std::array<ParamSpec, numParamsV8> base { {
         { osc1Wave,   4,  false, 1.0f },
         { osc1Octave, 5,  true,  0.4f },
         { osc1Semi,   25, true,  0.3f },
@@ -123,6 +125,16 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
         { mintStart,      0,  false, 0.1f },
         { mintLoop,       0,  false, 0.1f },
     } };
+    // M14 (CashCode v9): the LAYERS, generated (8 tone layers + 2 noise layers + 4 shared).
+    static const std::array<ParamSpec, numParams> table = []
+    {
+        std::array<ParamSpec, numParams> t {};
+        std::copy (base.begin(), base.end(), t.begin());
+        const auto extra = layers::specs();
+        jassert (static_cast<int> (extra.size()) == numParams - numParamsV8);
+        std::copy (extra.begin(), extra.end(), t.begin() + numParamsV8);
+        return t;
+    }();
     return table;
 }
 
@@ -155,7 +167,12 @@ bool isEffectParam (int index)
 
 bool isMintParam (int index)
 {
-    return index >= ParameterMap::numParamsV6 && index < ParameterMap::numParams;
+    return index >= ParameterMap::numParamsV6 && index < ParameterMap::numParamsV8;
+}
+
+bool isLayerParam (int index)
+{
+    return index >= ParameterMap::numParamsV8 && index < ParameterMap::numParams;
 }
 
 void effectsOff (Patch& p)
@@ -166,10 +183,15 @@ void effectsOff (Patch& p)
 
 int ParameterMap::indexOf (juce::StringRef id)
 {
-    for (int i = 0; i < numParams; ++i)
-        if (id == juce::StringRef (spec (i).id))
-            return i;
-    return -1;
+    static const std::unordered_map<std::string, int> lookup = []
+    {
+        std::unordered_map<std::string, int> m;
+        for (int i = 0; i < numParams; ++i)
+            m.emplace (spec (i).id, i);
+        return m;
+    }();
+    const auto it = lookup.find (std::string (id.text.getAddress()));
+    return it != lookup.end() ? it->second : -1;
 }
 
 int ParameterMap::toStep (const ParamSpec& s, float normalised)

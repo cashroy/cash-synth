@@ -1,3 +1,4 @@
+#include "Layers.h"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "PluginEditor.h"
@@ -192,7 +193,7 @@ TEST_CASE ("Bill front is wired to the money moves", "[editor][ui]")
     CHECK (ed.isFlipped());
     CHECK (ed.getBack().isVisible());
     CHECK_FALSE (ed.getFront().isVisible());
-    CHECK (ed.getAdvancedPanel().getNumControls() == p.getParameters().size());
+    CHECK (ed.getAdvancedPanel().getNumControls() == p.getParameters().size() - cash::layers::numParams);  // M14: LAYERS controls come in part 2
     ed.getBack().getFlipButton().onClick();
     CHECK_FALSE (ed.isFlipped());
 }

@@ -169,11 +169,25 @@ void CashSynthAudioProcessor::startMatch (uint64_t seed, cash::MatchBudget budge
     matcher.start (getPatch(), cash::defaultPatch (state), seed, budget);
 }
 
-bool CashSynthAudioProcessor::depositMatch()
+bool CashSynthAudioProcessor::matchUsesLayers() const
 {
     const auto r = matcher.getResult();
+    return r.layered.found && (matchPicksLayers || ! r.exact.found);
+}
+
+bool CashSynthAudioProcessor::depositMatch()
+{
+    auto r = matcher.getResult();
     if (! r.found)
         return false;
+    const bool layered = matchUsesLayers();
+    if (r.exact.found || r.layered.found)
+    {
+        const auto& o = r.pick (layered);
+        r.patch = o.patch;
+        r.percent = o.percent;
+        r.mint = o.mint;
+    }
     // Matches are made in Hz. An LFO the user had in SYNC stays synced, on the note
     // value nearest the matched rate at the current host tempo.
     auto patch = r.patch;
@@ -191,7 +205,7 @@ bool CashSynthAudioProcessor::depositMatch()
         patch[si] = 1.0f;
         patch[static_cast<size_t> (ni)] = cash::ParameterMap::fromStep (cash::ParameterMap::spec (ni), cash::tempo::nearestNote (hz, tempo));
     }
-    setPatch (patch, "Cash Match: " + matcher.getTargetName() + " " + juce::String (r.percent) + "%",
+    setPatch (patch, "Cash Match" + juce::String (layered ? " (layers): " : ": ") + matcher.getTargetName() + " " + juce::String (r.percent) + "%",
               r.mint != nullptr ? std::optional<cash::MintRef> (r.mint) : std::nullopt);
     return true;
 }
@@ -204,7 +218,8 @@ void CashSynthAudioProcessor::previewTarget()
 
 void CashSynthAudioProcessor::previewMatch()
 {
-    const auto clip = matcher.getBestRender();
+    const auto r = matcher.getResult();
+    const auto clip = r.exact.found || r.layered.found ? matcher.getRender (matchUsesLayers()) : matcher.getBestRender();
     if (clip.getNumSamples() > 0)
     {
         // Match the target's loudness so the A/B is fair.
