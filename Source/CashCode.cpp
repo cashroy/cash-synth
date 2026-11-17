@@ -93,7 +93,7 @@ namespace
         if (c == 'O') c = '0';
         if (c == 'I' || c == 'L') c = '1';
         for (int i = 0; i < 32; ++i)
-            if (alphabet[i] == c)
+            if (static_cast<juce::juce_wchar> (alphabet[i]) == c)
                 return i;
         return -1;
     }

@@ -210,7 +210,7 @@ M1-14 done (2026-11-18). v1.0.0 released from `main` with Mac + Windows installe
 
 ## Release (v1.0.0, 2026-11-18)
 - Version 1.0.0 (CMake). `CASH_COPY_PLUGINS` option (default ON; OFF for release/CI builds).
-- `.github/workflows/release.yml`: on a `v*` tag, macos-14 builds universal (arm64 + x86_64) VST3/AU/Standalone -> `packaging/mac/build_pkg.sh` -> `CashSynth-mac.pkg` (3 choices, ad-hoc signed bundles, unsigned pkg, AU postinstall restarts AudioComponentRegistrar); windows-2022 builds x64 VST3/Standalone + runs ctest (minus the big-model timing check) -> Inno Setup `packaging/windows/CashSynth.iss` -> `CashSynth-Setup.exe`; then publishes the GitHub Release with `packaging/release-notes.md`. Fixed file names so the website can link `releases/latest/download/...`.
+- `.github/workflows/release.yml`: on a `v*` tag, macos-latest builds universal (arm64 + x86_64) VST3/AU/Standalone -> `packaging/mac/build_pkg.sh` -> `CashSynth-mac.pkg` (3 choices, ad-hoc signed bundles, unsigned pkg, AU postinstall restarts AudioComponentRegistrar); windows-2022 builds x64 VST3/Standalone + runs ctest (minus the big-model timing check) -> Inno Setup `packaging/windows/CashSynth.iss` -> `CashSynth-Setup.exe`; then publishes the GitHub Release with `packaging/release-notes.md`. Fixed file names so the website can link `releases/latest/download/...`.
 - Website `cashroy.github.io/cashsynth/`: Download for Windows / Download for Mac / All releases (Mac-first on Macs; "Coming soon" if no release), LAYERS feature + screenshot, installer setup steps.
 - Not signed/notarised (no Apple Developer ID / Windows code-signing cert): users get Gatekeeper / SmartScreen prompts.
 

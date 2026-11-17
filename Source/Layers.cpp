@@ -1186,10 +1186,10 @@ Fit fit (const MintModel& m, int key, int wantLayers, const Wobbles& wob)
         else if (wahOn && harmonicsUsed >= 2)
         {
             // A wah needs a filter to move: a gentle low-pass a little above the layer's brightness.
-            double c = 0.0;
+            double centroid = 0.0;
             for (int h = 1; h <= numHarmonics; ++h)
-                c += std::log2 (static_cast<double> (h)) * W[static_cast<size_t> (h - 1)] * W[static_cast<size_t> (h - 1)];
-            const float fcHarm = 3.0f * std::exp2 (static_cast<float> (c));
+                centroid += std::log2 (static_cast<double> (h)) * W[static_cast<size_t> (h - 1)] * W[static_cast<size_t> (h - 1)];
+            const float fcHarm = 3.0f * std::exp2 (static_cast<float> (centroid));
             float kept = 0.0f;
             for (int h = 1; h <= numHarmonics; ++h)
                 kept += juce::square (W[static_cast<size_t> (h - 1)] * lpGain (static_cast<float> (h), fcHarm));
