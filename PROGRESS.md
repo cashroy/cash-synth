@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-Milestone 10 (tempo sync) **done**. Next: milestone 11 (delay + reverb).
+Milestone 11 (delay + reverb) **done**. Next: milestone 12 (polish, pluginval, README).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -19,7 +19,7 @@ Milestone 10 (tempo sync) **done**. Next: milestone 11 (delay + reverb).
 8. [x] Section on/off toggles + automation-ready (smoothing, safe mode switches)
 9. [x] Cash Match v2: whole sample, per-part scores, section switches, parallel search
 10. [x] Tempo sync: LFO 1/2 rates as Hz or note values, following the host BPM automatically
-11. [ ] Delay + reverb (user, 2026-11-17), delay time syncable
+11. [x] Delay + reverb after the voices, delay time + pre-delay syncable
 12. [ ] Polish, pluginval, README
 
 ## Key decisions
@@ -146,6 +146,16 @@ Milestone 10 (tempo sync) **done**. Next: milestone 11 (delay + reverb).
 - UI: `AdvancedPanel::RateModeSwitch` (TIME|SYNC gold plate) replaces the "Rate" label; SYNC swaps the Hz knob for a note knob in the same spot. Dims with its section.
 - Tests (`Tests/TempoTests.cpp`, 9 cases, fake play head): note Hz at 14 BPM/sig combos (4/4, 3/4, 7/8, 6/8, 5/4, 2/2), host defaults, free-run rate, lock from first sample at 6 BPM/sig/note combos + seek + stop, TIME ignores the song, note/mode/BPM change mid-note <= 2x steady step, v4 code/M9 project/stash load unsynced, jackpot rate, UI toggle.
 
+## Delay + reverb (M11)
+- 17 params appended (64 -> 81, `CashCode::version` 6, 90 chars; v1-v5 decode with effects OFF): `delayOn delayTime(1-2000 ms) delaySync delayNote delayFeedback(0-95 %) delayMix delayPingPong(Stereo/Ping-Pong) delayTone(-1 dark..0 flat..+1 thin)`, `reverbOn reverbSize reverbDecay(RT60 0.2-20 s) reverbDamp reverbPreDelay(0-250 ms) reverbPreSync reverbPreNote reverbWidth reverbMix`. Delay defaults to SYNC 1/8 D, pre-delay TIME 10 ms. `numParamsV5 = 64`, `isEffectParam`, `effectsOff`.
+- `Effects` (owned by `SynthEngine`, after the voices, before master gain): delay -> reverb. Off + faded = no work at all (bit-identical; golden renders pass). Switching on from idle clears the tail and snaps times. First block after prepare/reset snaps everything (the host's tempo decides echo times from the first sample). Mix: dry full up to 50 %, wet full from 50 %; mix 0 = exactly dry.
+- Delay: 4 s stereo lines (synced times clamped), Hermite read, time ramps 120 ms (tape-style on changes), tone = one-pole LP/HP in the loop, ping-pong sums the input into the left and crosses the repeats.
+- Reverb: pre-delay (1 s max) -> 2 all-passes per side -> 8-line Hadamard FDN (37-83 ms at size 100 %, 20 % at size 0), per-line gain from RT60, one-pole damping in the loop, M/S width. Wet gain calibrated: held note at mix 50 % ~ as loud as dry.
+- `getTailLengthSeconds` reports the effects tail (0 when off).
+- Money: weights 0.1-0.3. Jackpot own stream: delay on 20 % (synced 70 %), reverb 30 %, mixes 8-28 %. `Mutator::modestEffects`: an effect a move switched on or moved gets mix <= 30 %, feedback <= 60 %, decay <= 5 s; one the user set and the move didn't touch keeps its level. Cash Match: every candidate has both effects off, effect params never polished (deposit = effects off).
+- UI: back of the bill has pages, SYNTH | EFFECTS plate left of the title (`AdvancedPanel::PageTabs`, pages = transparent child components, same row height so knob sizes match). Effects page: DELAY row, REVERB row (each with ON/OFF and TIME/SYNC), signal-path plate below. Snapshot `Docs/editor-back-fx.png`.
+- Tests (`Tests/EffectsTests.cpp`, 10 cases): echo lands on the note value at 7 BPM/sig combos (<= 2 samples), TIME ignores tempo, clamp; feedback halves, ping-pong L then R, tone; reverb RT60 1 s / 3 s decay rates, dies away, width 0 = L==R, pre-delay TIME/SYNC, wet level; mix 0 = bit-identical dry; v5 code / M10 project / stash load off + golden render; max feedback/decay and wild automation stay finite; jackpot/invest caps; Cash Match leaves effects off; effects page UI.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
@@ -159,6 +169,7 @@ M8 verified 2026-11-17: clean build (-Werror), 70 tests pass (~26 s), no JUCE as
 
 M9 verified 2026-11-17: clean build (-Werror), 78 tests pass (~41 s Debug), no JUCE assertions, `auval` PASS, cheque snapshot checked by eye.
 M10 verified 2026-11-17: clean build (-Werror), 87 tests pass (~24 s), no JUCE assertions, `auval` PASS, back snapshot checked by eye.
+M11 verified 2026-11-17: clean build (-Werror), 97 tests pass (~33 s), no JUCE assertions, `auval` PASS, effects-page snapshot checked by eye.
 
 ## Plan: tempo sync + effects (asked 2026-11-17)
 - LFO part done in M10 (see above). M11: delay time and reverb pre-delay get the same TIME/SYNC switch and note list (`tempo::noteQuarters`).
@@ -175,4 +186,5 @@ M10 verified 2026-11-17: clean build (-Werror), 87 tests pass (~24 s), no JUCE a
 - Try in Logic: Cash Match on real samples (long pads, stereo chorus, vibrato leads); check CPU while matching during playback.
 - Known limits: very fast pitch drops (< ~50 ms) aren't tracked (46 ms window); unison beating is a real level/brightness wobble so it costs some ENVELOPE/BRIGHTNESS.
 - Try in Logic: synced LFOs at a few tempos, start/stop/loop, odd time signatures.
-- Milestone 11: delay + reverb (see Plan above). Then 12: polish (flip animation, lock toggles per knob), pluginval, README.
+- Try in Logic: delay at a few tempos (synced echoes on the grid), reverb tails, bounce end (tail length), CPU with both on.
+- Milestone 12: polish (flip animation, lock toggles per knob, maybe a lit dot on the EFFECTS tab when one is on), pluginval, README.

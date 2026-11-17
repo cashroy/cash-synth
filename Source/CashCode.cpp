@@ -26,6 +26,7 @@ namespace
             case 2:  return ParameterMap::numParamsV2;
             case 3:  return ParameterMap::numParamsV3;
             case 4:  return ParameterMap::numParamsV4;
+            case 5:  return ParameterMap::numParamsV5;
             default: return ParameterMap::numParams;
         }
     }

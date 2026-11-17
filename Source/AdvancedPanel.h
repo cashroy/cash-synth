@@ -51,6 +51,27 @@ public:
         bool synced = false;
     };
 
+    // M11: the back of the bill has two pages: the synth (4 rows) and the effects
+    // (DELAY, REVERB). Same row height on both, so every knob keeps its size.
+    enum Page { synthPage = 0, effectsPage = 1 };
+    static constexpr int rowsPerPage = 4;
+    void setPage (int page);
+    int getPage() const { return page; }
+    std::function<void (int)> onPageChange;
+
+    // The engraved SYNTH | EFFECTS plate that turns the page (BillBack places it).
+    class PageTabs final : public juce::Component, public juce::SettableTooltipClient
+    {
+    public:
+        explicit PageTabs (AdvancedPanel&);
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void choose (int page);
+
+    private:
+        AdvancedPanel& panel;
+    };
+
     // Knobs/menus, section switches, rate-mode toggles and note knobs: one control per parameter.
     int getNumControls() const;
     SectionSwitch* getSwitch (const juce::String& paramId) const;
@@ -86,13 +107,17 @@ private:
     void addSection (int row, const juce::String& title, std::initializer_list<std::pair<const char*, const char*>> params,
                      const char* switchId = nullptr);
     void setSectionOn (int row, size_t index, bool on);
+    void paintSignalPath (juce::Graphics&);
     void addRateSync (const char* rateId, const char* syncId, const char* noteId);
-    std::unique_ptr<juce::Slider> makeKnob (const char* paramId, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>&);
+    std::unique_ptr<juce::Slider> makeKnob (juce::Component& parent, const char* paramId, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>&);
+    juce::Component& pageFor (int row) { return pages[static_cast<size_t> (juce::jlimit (0, 1, row / rowsPerPage))]; }
 
     juce::AudioProcessorValueTreeState& state;
     std::vector<std::unique_ptr<Control>> controls;
     std::vector<std::vector<Section>> rows;
     std::vector<std::unique_ptr<SectionSwitch>> switches;
+    std::array<juce::Component, 2> pages; // transparent; the panel paints the section plates
+    int page = synthPage;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdvancedPanel)
 };

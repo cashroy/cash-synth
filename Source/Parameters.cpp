@@ -12,6 +12,15 @@ juce::StringArray glideModeNames() { return { "Always", "Legato" }; }
 juce::StringArray glideTypeNames() { return { "Time", "Rate" }; }
 juce::StringArray priorityNames()  { return { "Last", "Low", "High" }; }
 juce::StringArray rateModeNames()  { return { "Time", "Sync" }; }
+juce::StringArray delayModeNames() { return { "Stereo", "Ping-Pong" }; }
+
+juce::NormalisableRange<float> delayFeedbackRange() { return { 0.0f, 0.95f }; }
+juce::NormalisableRange<float> reverbDecayRange()
+{
+    juce::NormalisableRange<float> r (0.2f, 20.0f);
+    r.setSkewForCentre (2.0f);
+    return r;
+}
 
 namespace
 {
@@ -47,6 +56,14 @@ namespace
     {
         const juce::String suffix (u);
         return FloatAttrs().withStringFromValueFunction ([decimals, suffix] (float v, int) { return fmt (v, decimals, suffix); });
+    }
+
+    FloatAttrs millis()
+    {
+        return FloatAttrs().withStringFromValueFunction ([] (float v, int)
+                           { return v < 1000.0f ? fmt (v, v < 10.0f ? 1 : 0, "ms") : fmt (v / 1000.0f, 2, "s"); })
+                           .withValueFromStringFunction ([] (const juce::String& s)
+                           { return s.containsIgnoreCase ("ms") || ! s.containsIgnoreCase ("s") ? s.getFloatValue() : s.getFloatValue() * 1000.0f; });
     }
 
     juce::NormalisableRange<float> skewed (float lo, float hi, float centre)
@@ -152,6 +169,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         l.add (std::make_unique<juce::AudioParameterChoice> (pid (sync), juce::String (name) + " Rate Mode", rateModeNames(), timeMode));
         l.add (std::make_unique<juce::AudioParameterChoice> (pid (note), juce::String (name) + " Sync Rate", tempo::noteNames(), tempo::defaultNote));
     }
+
+    // M11 delay + reverb (append-only). Both off by default = the M10 sound.
+    l.add (std::make_unique<juce::AudioParameterBool> (pid (delayOn), "Delay On", false));
+    addFloat (l, delayTime, "Delay Time", skewed (1.0f, 2000.0f, 300.0f), 375.0f, millis());
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (delaySync), "Delay Time Mode", rateModeNames(), syncMode));
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (delayNote), "Delay Sync Time", tempo::noteNames(), tempo::noteNames().indexOf ("1/8 D")));
+    addFloat (l, delayFeedback, "Delay Feedback", delayFeedbackRange(), 0.35f, percent());
+    addFloat (l, delayMix, "Delay Mix", { 0.0f, 1.0f }, 0.25f, percent());
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (delayPingPong), "Delay Ping-Pong", delayModeNames(), stereoDelay));
+    addFloat (l, delayTone, "Delay Tone", { -1.0f, 1.0f }, -0.3f, percent());
+
+    l.add (std::make_unique<juce::AudioParameterBool> (pid (reverbOn), "Reverb On", false));
+    addFloat (l, reverbSize, "Reverb Size", { 0.0f, 1.0f }, 0.5f, percent());
+    addFloat (l, reverbDecay, "Reverb Decay", reverbDecayRange(), 2.0f, seconds());
+    addFloat (l, reverbDamp, "Reverb Damping", { 0.0f, 1.0f }, 0.4f, percent());
+    addFloat (l, reverbPreDelay, "Reverb Pre-Delay", skewed (0.0f, 250.0f, 40.0f), 10.0f, millis());
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (reverbPreSync), "Reverb Pre-Delay Mode", rateModeNames(), timeMode));
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (reverbPreNote), "Reverb Pre-Delay Sync", tempo::noteNames(), tempo::noteNames().indexOf ("1/32")));
+    addFloat (l, reverbWidth, "Reverb Width", { 0.0f, 1.0f }, 1.0f, percent());
+    addFloat (l, reverbMix, "Reverb Mix", { 0.0f, 1.0f }, 0.2f, percent());
 
     return l;
 }

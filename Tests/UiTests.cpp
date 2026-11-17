@@ -239,6 +239,10 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
     for (auto* id : { cash::param::lfo2On, cash::param::driveOn })
         rig.p.getState().getParameter (id)->setValueNotifyingHost (0.0f);
     write (front.getSiblingFile (front.getFileNameWithoutExtension() + "-back.png"));
+    // M11: the effects page, delay on (synced), reverb off.
+    rig.editor->getBack().getPageTabs().choose (cash::AdvancedPanel::effectsPage);
+    rig.p.getState().getParameter (cash::param::delayOn)->setValueNotifyingHost (1.0f);
+    write (front.getSiblingFile (front.getFileNameWithoutExtension() + "-back-fx.png"));
     stashDir.deleteRecursively();
 }
 

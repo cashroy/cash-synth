@@ -384,6 +384,8 @@ TEST_CASE ("Old codes, projects and stashes load unsynced", "[m10][state]")
     auto params = root.getChildWithName ("PARAMS");
     for (auto* id : { lfo1Sync, lfo1Note, lfo2Sync, lfo2Note })
         params.removeChild (params.getChildWithProperty ("id", id), nullptr);
+    for (int k = cash::ParameterMap::numParamsV5; k < cash::ParameterMap::numParams; ++k) // nor M11's effects
+        params.removeChild (params.getChildWithProperty ("id", cash::ParameterMap::spec (k).id), nullptr);
     REQUIRE (params.getNumChildren() == cash::ParameterMap::numParamsV4);
 
     r.set (lfo1Sync, syncMode);

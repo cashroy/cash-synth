@@ -9,6 +9,7 @@ SynthEngine::SynthEngine (juce::AudioProcessorValueTreeState& state)
 }
 
 SynthEngine::SynthEngine (const RawLookup& lookup)
+    : fx (lookup)
 {
     auto bind = [&lookup] (Raw& r, const char* id)
     {
@@ -103,6 +104,7 @@ void SynthEngine::prepare (double newSampleRate, int maxBlockSize)
     readParameters();
     snapSmoothers();
     gain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterGain.get()));
+    fx.prepare (newSampleRate, maxBlockSize);
     reset();
 }
 
@@ -115,6 +117,7 @@ void SynthEngine::reset()
     ctx.bend = ctx.modWheel = 0.0f;
     lfo1.phase = lfo2.phase = 0.0;
     wasLocked = false;
+    fx.reset();
     // Oscillators free-run between notes; a reset makes renders repeatable (Cash Match relies on it).
     // Voice 0 starts at phase 0 as before; the others are staggered so unison voices don't start in phase.
     for (size_t i = 0; i < voices.size(); ++i)
@@ -388,6 +391,7 @@ void SynthEngine::render (juce::AudioBuffer<float>& buffer, const juce::MidiBuff
     for (; event != midi.cend(); ++event)
         handleMidi ((*event).getMessage());
 
+    fx.process (buffer, hostTempo); // off = untouched
     gain.applyGain (buffer, total);
 }
 

@@ -202,6 +202,8 @@ TEST_CASE ("Old codes, projects, stashes and vault notes load with every section
         params.removeChild (params.getChildWithProperty ("id", id), nullptr);
         root.getChildWithName ("Vault").getChild (0).getChildWithName ("Patch").removeProperty (id, nullptr);
     }
+    for (int k = cash::ParameterMap::numParamsV5; k < cash::ParameterMap::numParams; ++k) // nor M11's effects
+        params.removeChild (params.getChildWithProperty ("id", cash::ParameterMap::spec (k).id), nullptr);
     REQUIRE (params.getNumChildren() == cash::ParameterMap::numParamsV3);
 
     for (auto* id : switches)

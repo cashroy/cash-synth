@@ -97,6 +97,9 @@ namespace
             for (auto* syncId : { lfo1Sync, lfo1Note, lfo2Sync, lfo2Note })
                 if (id == juce::StringRef (syncId))
                     return false;
+            // M11: delay and reverb are left off (and alone).
+            if (isEffectParam (i))
+                return false;
             return s.weight > 0.0f || isSectionSwitch (i);
         };
 
@@ -661,8 +664,12 @@ void CashMatcher::search()
         if (cancelled())
             return false;
         // M10: matches are made in Hz (renders run at 120 BPM, stopped); sync is the user's call.
+        // M11: and with the delay and reverb off (the voices are what gets matched).
         for (auto& p : patches)
+        {
             unsync (p);
+            effectsOff (p);
+        }
         const auto evals = evaluateBatch (patches);
         if (cancelled())
             return false;

@@ -47,6 +47,11 @@ public:
     // isn't screaming, the amp envelope isn't absurdly slow. Skips locked params.
     static void makePlayable (Patch&, const LockMask& locks = {});
 
+    // M11: delay/reverb a money move switched on or moved stay in the background:
+    // modest mixes, feedback and decay. `before` is the patch the move started from
+    // (an effect that was already on and untouched keeps the user's settings).
+    static void modestEffects (Patch&, const Patch& before, const LockMask& locks = {}, bool force = false);
+
     // Mean absolute difference over mutable params (0 = same, 1 = opposite).
     static float distance (const Patch& a, const Patch& b);
 };

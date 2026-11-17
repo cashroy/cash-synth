@@ -91,6 +91,26 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
         { lfo1Note, 24, true,  0.5f },
         { lfo2Sync, 2,  false, 0.1f },
         { lfo2Note, 24, true,  0.5f },
+
+        // M11 (CashCode v6): delay + reverb. Switched on now and then; Jackpot/Invest
+        // keep the mixes modest (Mutator), Cash Match leaves both off.
+        { delayOn,        2,  false, 0.1f },
+        { delayTime,      0,  false, 0.3f },
+        { delaySync,      2,  false, 0.1f },
+        { delayNote,      24, true,  0.3f },
+        { delayFeedback,  0,  false, 0.3f },
+        { delayMix,       0,  false, 0.2f },
+        { delayPingPong,  2,  false, 0.15f },
+        { delayTone,      0,  false, 0.3f },
+        { reverbOn,       2,  false, 0.1f },
+        { reverbSize,     0,  false, 0.3f },
+        { reverbDecay,    0,  false, 0.3f },
+        { reverbDamp,     0,  false, 0.3f },
+        { reverbPreDelay, 0,  false, 0.2f },
+        { reverbPreSync,  2,  false, 0.1f },
+        { reverbPreNote,  24, true,  0.2f },
+        { reverbWidth,    0,  false, 0.2f },
+        { reverbMix,      0,  false, 0.2f },
     } };
     return table;
 }
@@ -114,6 +134,17 @@ void allSectionsOn (Patch& p)
 void unsync (Patch& p)
 {
     for (auto* id : { param::lfo1Sync, param::lfo2Sync })
+        p[static_cast<size_t> (ParameterMap::indexOf (id))] = 0.0f;
+}
+
+bool isEffectParam (int index)
+{
+    return index >= ParameterMap::numParamsV5 && index < ParameterMap::numParams;
+}
+
+void effectsOff (Patch& p)
+{
+    for (auto* id : { param::delayOn, param::reverbOn })
         p[static_cast<size_t> (ParameterMap::indexOf (id))] = 0.0f;
 }
 

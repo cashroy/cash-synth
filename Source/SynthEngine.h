@@ -4,6 +4,7 @@
 #include <array>
 #include "SynthVoice.h"
 #include "Tempo.h"
+#include "Effects.h"
 
 namespace cash
 {
@@ -27,6 +28,9 @@ public:
     // (default: 120 BPM, 4/4, stopped). Synced LFO rates follow it; while it plays
     // they lock their phase to the song position.
     void render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const tempo::Info& tempo = {});
+
+    // M11: delay + reverb after the voices (before the master gain).
+    const Effects& getEffects() const { return fx; }
 
     double getLfoPhase (int which) const { return (which == 0 ? lfo1 : lfo2).phase; } // 0..1, for tests
 
@@ -123,5 +127,6 @@ private:
     double sampleRate = 44100.0;
     Lfo lfo1, lfo2;
     juce::SmoothedValue<float> gain { 0.5f };
+    Effects fx;
 };
 }

@@ -88,6 +88,26 @@ namespace cash::param
     inline constexpr const char* lfo2Sync = "lfo2Sync";
     inline constexpr const char* lfo2Note = "lfo2Note";
 
+    // M11: stereo delay + reverb after the voices. Appended (CashCode v6); both
+    // default OFF, so older codes, projects, stashes and vault notes sound as before.
+    inline constexpr const char* delayOn       = "delayOn";
+    inline constexpr const char* delayTime     = "delayTime";     // 1..2000 ms (TIME)
+    inline constexpr const char* delaySync     = "delaySync";     // Time / Sync
+    inline constexpr const char* delayNote     = "delayNote";     // note value (SYNC)
+    inline constexpr const char* delayFeedback = "delayFeedback"; // 0..95 %
+    inline constexpr const char* delayMix      = "delayMix";
+    inline constexpr const char* delayPingPong = "delayPingPong"; // Stereo / Ping-Pong
+    inline constexpr const char* delayTone     = "delayTone";     // -1 dark .. 0 flat .. +1 thin
+    inline constexpr const char* reverbOn       = "reverbOn";
+    inline constexpr const char* reverbSize     = "reverbSize";
+    inline constexpr const char* reverbDecay    = "reverbDecay";    // RT60, 0.2..20 s
+    inline constexpr const char* reverbDamp     = "reverbDamp";
+    inline constexpr const char* reverbPreDelay = "reverbPreDelay"; // 0..250 ms (TIME)
+    inline constexpr const char* reverbPreSync  = "reverbPreSync";  // Time / Sync
+    inline constexpr const char* reverbPreNote  = "reverbPreNote";  // note value (SYNC)
+    inline constexpr const char* reverbWidth    = "reverbWidth";
+    inline constexpr const char* reverbMix      = "reverbMix";
+
     enum Wave { sine = 0, triangle, saw, square };
     enum FilterMode { lowPass = 0, bandPass, highPass };
     enum DriveType { softClip = 0, hardClip, fold };
@@ -97,6 +117,7 @@ namespace cash::param
     enum GlideType { constantTime = 0, constantRate };
     enum NotePriority { lastNote = 0, lowNote, highNote };
     enum RateMode { timeMode = 0, syncMode };
+    enum DelayMode { stereoDelay = 0, pingPong };
 
     inline constexpr float pitchEnvRange = 24.0f;      // semitones at 100 %
     inline constexpr float unisonDetuneRange = 1.0f;   // semitones between the outer unison voices at 100 %
@@ -113,6 +134,11 @@ namespace cash::param
     juce::StringArray glideTypeNames();
     juce::StringArray priorityNames();
     juce::StringArray rateModeNames();
+    juce::StringArray delayModeNames();
+
+    // Ranges shared with the money moves (which work in normalised values).
+    juce::NormalisableRange<float> delayFeedbackRange();
+    juce::NormalisableRange<float> reverbDecayRange();
 
     juce::StringArray sectionSwitchIds(); // the M8 on/off params, in ParameterMap order
 

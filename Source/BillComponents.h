@@ -149,11 +149,13 @@ public:
 
     AdvancedPanel& getAdvancedPanel() { return advanced; }
     FlipButton& getFlipButton() { return flip; }
+    AdvancedPanel::PageTabs& getPageTabs() { return tabs; }
     std::function<void()> onFlip;
 
 private:
     ArtCache art;
     AdvancedPanel advanced;
+    AdvancedPanel::PageTabs tabs { advanced };
     FlipButton flip { "FLIP TO FRONT", true };
 };
 }

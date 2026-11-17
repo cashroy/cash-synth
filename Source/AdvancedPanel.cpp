@@ -84,7 +84,7 @@ AdvancedPanel::RateModeSwitch::RateModeSwitch (juce::RangedAudioParameter& p, st
                   }),
       changed (std::move (onChange))
 {
-    setTooltip (p.getName (64) + ": TIME = Hz, SYNC = note value at the host tempo");
+    setTooltip (p.getName (64) + ": TIME = set by hand, SYNC = note value at the host tempo");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     setRepaintsOnMouseActivity (true);
     attachment.sendInitialUpdate();
@@ -129,9 +129,76 @@ void AdvancedPanel::RateModeSwitch::paint (juce::Graphics& g)
     g.drawText ("SYNC", right, juce::Justification::centred, false);
 }
 
+//============================================================================== PageTabs
+AdvancedPanel::PageTabs::PageTabs (AdvancedPanel& p) : panel (p)
+{
+    setTooltip ("Turn the page: synth controls / effects (delay, reverb)");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setRepaintsOnMouseActivity (true);
+}
+
+void AdvancedPanel::PageTabs::choose (int newPage)
+{
+    panel.setPage (newPage);
+    repaint();
+}
+
+void AdvancedPanel::PageTabs::mouseDown (const juce::MouseEvent& e)
+{
+    choose (e.position.x < static_cast<float> (getWidth()) * 0.5f ? synthPage : effectsPage);
+}
+
+void AdvancedPanel::PageTabs::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    const auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const float radius = r.getHeight() * 0.5f;
+    g.setColour (knobBody);
+    g.fillRoundedRectangle (r, radius);
+
+    const auto left = r.withWidth (r.getWidth() * 0.5f), right = left.withX (left.getRight());
+    const bool fx = panel.getPage() == effectsPage;
+    const auto lit = fx ? right : left;
+    juce::Path pill;
+    pill.addRoundedRectangle (r.reduced (1.5f), radius - 1.5f);
+    g.saveState();
+    g.reduceClipRegion (pill);
+    g.setGradientFill (juce::ColourGradient (gold.brighter (0.25f), lit.getX(), lit.getY(), gold.darker (0.3f), lit.getX(), lit.getBottom(), false));
+    g.fillRect (lit);
+    g.restoreState();
+
+    g.setColour (isMouseOver() ? gold : goldDim);
+    g.drawRoundedRectangle (r, radius, 1.0f);
+    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    g.setColour (fx ? text.withAlpha (0.6f) : knobBody);
+    g.drawText ("SYNTH", left, juce::Justification::centred, false);
+    g.setColour (fx ? knobBody : text.withAlpha (0.6f));
+    g.drawText ("EFFECTS", right, juce::Justification::centred, false);
+}
+
+void AdvancedPanel::setPage (int newPage)
+{
+    newPage = juce::jlimit (0, 1, newPage);
+    if (newPage == page)
+        return;
+    page = newPage;
+    for (size_t i = 0; i < pages.size(); ++i)
+        pages[i].setVisible (static_cast<int> (i) == page);
+    repaint();
+    if (onPageChange)
+        onPageChange (page);
+}
+
 AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
 {
     using namespace param;
+    for (auto& pg : pages)
+    {
+        pg.setInterceptsMouseClicks (false, true);
+        addChildComponent (pg);
+    }
+    pages[synthPage].setVisible (true);
+
     addSection (0, "OSC 1", { { osc1Wave, "Wave" }, { osc1Octave, "Octave" }, { osc1Semi, "Semi" }, { osc1Fine, "Fine" }, { osc1Level, "Level" } }, osc1On);
     addSection (0, "OSC 2", { { osc2Wave, "Wave" }, { osc2Octave, "Octave" }, { osc2Semi, "Semi" }, { osc2Fine, "Fine" }, { osc2Level, "Level" } }, osc2On);
     addSection (0, "SUB / NOISE", { { subLevel, "Sub" }, { noiseLevel, "Noise" } }, subNoiseOn);
@@ -153,12 +220,20 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
     addSection (3, "GLIDE", { { glideTime, "Time" }, { glideMode, "When" }, { glideType, "Type" } }, glideOn);
     addSection (3, "PLAY", { { bendRange, "Bend" }, { modVibrato, "Mod Vib" }, { velToCutoff, "Vel > Cut" } });
 
-    // M10: TIME / SYNC over each LFO rate.
+    // M11, effects page: DELAY then REVERB (the signal order), each with its switch.
+    addSection (rowsPerPage + 0, "DELAY", { { delayTime, "Time" }, { delayFeedback, "Feedback" }, { delayTone, "Tone" },
+                                            { delayPingPong, "Mode" }, { delayMix, "Mix" } }, delayOn);
+    addSection (rowsPerPage + 1, "REVERB", { { reverbSize, "Size" }, { reverbDecay, "Decay" }, { reverbDamp, "Damping" },
+                                             { reverbPreDelay, "Pre-Delay" }, { reverbWidth, "Width" }, { reverbMix, "Mix" } }, reverbOn);
+
+    // M10: TIME / SYNC over each LFO rate. M11: and over the delay time and pre-delay.
     addRateSync (lfoRate, lfo1Sync, lfo1Note);
     addRateSync (lfo2Rate, lfo2Sync, lfo2Note);
+    addRateSync (delayTime, delaySync, delayNote);
+    addRateSync (reverbPreDelay, reverbPreSync, reverbPreNote);
 }
 
-std::unique_ptr<juce::Slider> AdvancedPanel::makeKnob (const char* id, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>& attachment)
+std::unique_ptr<juce::Slider> AdvancedPanel::makeKnob (juce::Component& parent, const char* id, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>& attachment)
 {
     auto* p = state.getParameter (id);
     jassert (p != nullptr);
@@ -170,7 +245,7 @@ std::unique_ptr<juce::Slider> AdvancedPanel::makeKnob (const char* id, std::uniq
     slider->setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     slider->setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     slider->setTooltip (p->getName (64));
-    addAndMakeVisible (*slider);
+    parent.addAndMakeVisible (*slider);
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, *slider);
     // Double-click resets to the parameter default.
     slider->setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));
@@ -184,7 +259,9 @@ void AdvancedPanel::addRateSync (const char* rateId, const char* syncId, const c
     auto* c = it->get();
 
     c->noteId = noteId;
-    c->noteSlider = makeKnob (noteId, c->noteAttachment);
+    auto* parent = c->slider->getParentComponent();
+    jassert (parent != nullptr);
+    c->noteSlider = makeKnob (*parent, noteId, c->noteAttachment);
     c->noteSlider->setAlpha (c->slider->getAlpha());
     c->label.setVisible (false); // the toggle takes the label's place
 
@@ -195,7 +272,7 @@ void AdvancedPanel::addRateSync (const char* rateId, const char* syncId, const c
         c->slider->setVisible (! synced);
         c->noteSlider->setVisible (synced);
     });
-    addAndMakeVisible (*c->rateMode);
+    parent->addAndMakeVisible (*c->rateMode);
 }
 
 int AdvancedPanel::getNumControls() const
@@ -235,6 +312,7 @@ void AdvancedPanel::addSection (int row, const juce::String& title, std::initial
         rows.resize (static_cast<size_t> (row + 1));
 
     Section section { title, {}, {}, nullptr };
+    auto& parent = pageFor (row);
 
     for (const auto& [id, name] : params)
     {
@@ -245,19 +323,19 @@ void AdvancedPanel::addSection (int row, const juce::String& title, std::initial
         c->paramId = id;
         c->label.setText (name, juce::dontSendNotification);
         c->label.setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (c->label);
+        parent.addAndMakeVisible (c->label);
 
         if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (p))
         {
             c->combo = std::make_unique<juce::ComboBox>();
             c->combo->addItemList (choice->choices, 1);
             c->combo->setTooltip (p->getName (64));
-            addAndMakeVisible (*c->combo);
+            parent.addAndMakeVisible (*c->combo);
             c->comboAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (state, id, *c->combo);
         }
         else
         {
-            c->slider = makeKnob (id, c->sliderAttachment);
+            c->slider = makeKnob (parent, id, c->sliderAttachment);
         }
 
         section.controls.push_back (c.get());
@@ -274,7 +352,7 @@ void AdvancedPanel::addSection (int row, const juce::String& title, std::initial
         jassert (p != nullptr);
         // Created after the section is stored: the attachment's first callback dims it.
         auto sw = std::make_unique<SectionSwitch> (*p, [this, row, index] (bool on) { setSectionOn (row, index, on); });
-        addAndMakeVisible (*sw);
+        parent.addAndMakeVisible (*sw);
         rowSections[index].onOff = sw.get();
         setSectionOn (row, index, sw->isOn());
         switches.push_back (std::move (sw));
@@ -314,9 +392,11 @@ float AdvancedPanel::getControlAlpha (const juce::String& paramId) const
 
 void AdvancedPanel::paint (juce::Graphics& g)
 {
-    for (const auto& row : rows)
+    for (size_t ri = 0; ri < rows.size(); ++ri)
     {
-        for (const auto& s : row)
+        if (static_cast<int> (ri) / rowsPerPage != page)
+            continue;
+        for (const auto& s : rows[ri])
         {
             const auto r = s.bounds.toFloat();
             g.setColour (colours::panel);
@@ -330,21 +410,70 @@ void AdvancedPanel::paint (juce::Graphics& g)
             g.drawText (s.title, s.bounds.withHeight (titleHeight + 2).reduced (10, 0), juce::Justification::centredLeft);
         }
     }
+
+    if (page == effectsPage)
+        paintSignalPath (g);
+}
+
+void AdvancedPanel::paintSignalPath (juce::Graphics& g)
+{
+    // Under the effect rows: an engraved plate showing where the effects sit.
+    auto area = getLocalBounds();
+    const int rowHeight = (area.getHeight() - rowGap * (rowsPerPage - 1)) / rowsPerPage;
+    area.removeFromTop (2 * (rowHeight + rowGap));
+    const auto plate = area.toFloat().reduced (0.0f, 4.0f);
+    g.setColour (colours::panel.withAlpha (0.55f));
+    g.fillRoundedRectangle (plate, 8.0f);
+    g.setColour (colours::panelEdge);
+    g.drawRoundedRectangle (plate.reduced (0.5f), 8.0f, 1.0f);
+
+    const juce::StringArray steps { "VOICES", "DELAY", "REVERB", "MASTER GAIN", "OUT" };
+    const float boxW = 130.0f, boxH = 34.0f, arrow = juce::jmax (20.0f, (plate.getWidth() - 60.0f - boxW * 5.0f) / 4.0f);
+    float x = plate.getCentreX() - (boxW * 5.0f + arrow * 4.0f) * 0.5f;
+    const float y = plate.getCentreY() - boxH * 0.5f - 8.0f;
+    for (int i = 0; i < steps.size(); ++i)
+    {
+        const juce::Rectangle<float> box (x, y, boxW, boxH);
+        g.setColour (colours::knobBody);
+        g.fillRoundedRectangle (box, 6.0f);
+        g.setColour (colours::goldDim);
+        g.drawRoundedRectangle (box, 6.0f, 1.0f);
+        g.setColour (colours::gold);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawText (steps[i], box, juce::Justification::centred, false);
+        x += boxW;
+        if (i + 1 < steps.size())
+        {
+            juce::Path a;
+            a.addArrow ({ x + 4.0f, box.getCentreY(), x + arrow - 4.0f, box.getCentreY() }, 1.5f, 8.0f, 7.0f);
+            g.setColour (colours::goldDim);
+            g.fillPath (a);
+            x += arrow;
+        }
+    }
+    g.setColour (colours::text.withAlpha (0.6f));
+    g.setFont (juce::FontOptions (11.0f));
+    g.drawText ("Effects are off on older sounds. Cash Match leaves them off; Jackpot and Invest keep them in the background.",
+                plate.withTop (y + boxH + 8.0f).withHeight (18.0f), juce::Justification::centred, false);
 }
 
 void AdvancedPanel::resized()
 {
-    auto area = getLocalBounds();
-    const int numRows = static_cast<int> (rows.size());
-    if (numRows == 0)
+    for (auto& pg : pages)
+        pg.setBounds (getLocalBounds());
+
+    const auto full = getLocalBounds();
+    if (rows.empty())
         return;
 
-    const int rowHeight = (area.getHeight() - rowGap * (numRows - 1)) / numRows;
+    // Every page uses the synth page's row height: knobs are the same size everywhere.
+    const int rowHeight = (full.getHeight() - rowGap * (rowsPerPage - 1)) / rowsPerPage;
 
-    for (auto& row : rows)
+    for (size_t ri = 0; ri < rows.size(); ++ri)
     {
-        auto rowArea = area.removeFromTop (rowHeight);
-        area.removeFromTop (rowGap);
+        auto& row = rows[ri];
+        const int slot = static_cast<int> (ri) % rowsPerPage;
+        auto rowArea = full.withTop (full.getY() + slot * (rowHeight + rowGap)).withHeight (rowHeight);
 
         int units = 0;
         for (const auto& s : row)

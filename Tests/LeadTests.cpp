@@ -411,6 +411,11 @@ TEST_CASE ("Old codes and projects load with lead mode off", "[lead][state][cash
         params.removeChild (params.getChildWithProperty ("id", id), nullptr);
         root.getChildWithName ("Vault").getChild (0).getChildWithName ("Patch").removeProperty (id, nullptr);
     }
+    for (int k = cash::ParameterMap::numParamsV5; k < cash::ParameterMap::numParams; ++k) // nor M11's effects
+    {
+        params.removeChild (params.getChildWithProperty ("id", cash::ParameterMap::spec (k).id), nullptr);
+        root.getChildWithName ("Vault").getChild (0).getChildWithName ("Patch").removeProperty (cash::ParameterMap::spec (k).id, nullptr);
+    }
     REQUIRE (params.getNumChildren() == cash::ParameterMap::numParamsV2);
 
     // Load it into an instance that's currently in Mono with unison and glide.

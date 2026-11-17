@@ -112,6 +112,7 @@ Patch Mutator::invest (const Patch& base, const Investment& inv, const LockMask&
     }
 
     makePlayable (out, locks);
+    modestEffects (out, base, locks);
     return out;
 }
 
@@ -177,8 +178,47 @@ Patch Mutator::jackpot (const Patch& base, uint64_t seed, const LockMask& locks)
         }
     }
 
+    // M11: delay and reverb now and then, synced delay usually; levels set modestly.
+    // Own stream, same draws whatever is locked.
+    {
+        Rng fx (seed ^ 0x45464658ull);
+        const bool delay = fx.chance (0.2f), delaySynced = fx.chance (0.7f);
+        const bool reverb = fx.chance (0.3f), preSynced = fx.chance (0.2f);
+        const float delayMix = 0.08f + 0.17f * fx.uniform();
+        const float reverbMix = 0.08f + 0.2f * fx.uniform();
+        const float feedback = 0.1f + 0.45f * fx.uniform(); // normalised, of 0..95 %
+        auto put = [&] (const char* id, float v) { if (isFree (locks, static_cast<int> (at (id)))) out[at (id)] = v; };
+        put (param::delayOn, delay ? 1.0f : 0.0f);
+        put (param::delaySync, delaySynced ? 1.0f : 0.0f);
+        put (param::reverbOn, reverb ? 1.0f : 0.0f);
+        put (param::reverbPreSync, preSynced ? 1.0f : 0.0f);
+        put (param::delayMix, delayMix);
+        put (param::reverbMix, reverbMix);
+        put (param::delayFeedback, feedback);
+    }
+
     makePlayable (out, locks);
+    modestEffects (out, base, locks, true);
     return out;
+}
+
+void Mutator::modestEffects (Patch& p, const Patch& before, const LockMask& locks, bool force)
+{
+    using namespace param;
+    static const float feedbackCap = delayFeedbackRange().convertTo0to1 (0.6f);
+    static const float decayCap = reverbDecayRange().convertTo0to1 (5.0f);
+    struct Cap { const char* on; const char* id; float max; };
+    const Cap caps[] = { { delayOn, delayMix, 0.3f }, { delayOn, delayFeedback, feedbackCap },
+                         { reverbOn, reverbMix, 0.3f }, { reverbOn, reverbDecay, decayCap } };
+    for (const auto& c : caps)
+    {
+        const auto on = at (c.on), i = at (c.id);
+        if (locks.test (i) || p[on] < 0.5f)
+            continue;
+        const bool moved = force || before[on] < 0.5f || std::abs (p[i] - before[i]) > 1.0e-6f;
+        if (moved)
+            p[i] = juce::jmin (p[i], c.max);
+    }
 }
 
 void Mutator::makePlayable (Patch& p, const LockMask& locks)

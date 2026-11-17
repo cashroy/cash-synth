@@ -374,8 +374,10 @@ void BillFront::resized()
 BillBack::BillBack (juce::AudioProcessorValueTreeState& state) : advanced (state)
 {
     addAndMakeVisible (advanced);
+    addAndMakeVisible (tabs);
     addAndMakeVisible (flip);
     flip.onClick = [this] { if (onFlip) onFlip(); };
+    advanced.onPageChange = [this] (int) { tabs.repaint(); };
 }
 
 void BillBack::paint (juce::Graphics& g)
@@ -388,6 +390,7 @@ void BillBack::resized()
     auto inner = getLocalBounds().reduced (20, 18);
     auto titleRow = inner.removeFromTop (24);
     flip.setBounds (titleRow.removeFromRight (150).reduced (0, 1));
+    tabs.setBounds (titleRow.removeFromLeft (170).reduced (0, 1)); // left of the centred title
     inner.removeFromTop (4);
     advanced.setBounds (inner);
 }
