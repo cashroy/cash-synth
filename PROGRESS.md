@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-M1-14 done (2026-11-18). M14 LAYERS (parts 1 + 2) merged into local `main` from `m14-layers`; not pushed yet.
+M1-14 done (2026-11-18). v1.0.0 released from `main` with Mac + Windows installers (see Release).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -208,6 +208,12 @@ M1-14 done (2026-11-18). M14 LAYERS (parts 1 + 2) merged into local `main` from 
 - Website: https://cashroy.github.io/cashsynth/ (project page + card in Apps on the home page), repo `cashroy/cashroy.github.io`.
 - `gh` isn't installed system-wide; this session used a downloaded copy (v2.104.0) in its scratchpad, logged in as `cashroy`.
 
+## Release (v1.0.0, 2026-11-18)
+- Version 1.0.0 (CMake). `CASH_COPY_PLUGINS` option (default ON; OFF for release/CI builds).
+- `.github/workflows/release.yml`: on a `v*` tag, macos-14 builds universal (arm64 + x86_64) VST3/AU/Standalone -> `packaging/mac/build_pkg.sh` -> `CashSynth-mac.pkg` (3 choices, ad-hoc signed bundles, unsigned pkg, AU postinstall restarts AudioComponentRegistrar); windows-2022 builds x64 VST3/Standalone + runs ctest (minus the big-model timing check) -> Inno Setup `packaging/windows/CashSynth.iss` -> `CashSynth-Setup.exe`; then publishes the GitHub Release with `packaging/release-notes.md`. Fixed file names so the website can link `releases/latest/download/...`.
+- Website `cashroy.github.io/cashsynth/`: Download for Windows / Download for Mac / All releases (Mac-first on Macs; "Coming soon" if no release), LAYERS feature + screenshot, installer setup steps.
+- Not signed/notarised (no Apple Developer ID / Windows code-signing cert): users get Gatekeeper / SmartScreen prompts.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
@@ -239,7 +245,8 @@ M14 part 2 verified 2026-11-18: clean build (-Werror), 125 tests pass (ctest -j4
 - Tests: rate = BPM-derived Hz for each note value at several BPMs incl. odd time signatures; phase locked to PPQ; BPM change mid-note is smooth; old codes/projects load unsynced; delay echo lands at the synced time; reverb tail decays, mix 0 = dry, effects off = bit-identical to M9 renders (golden renders).
 
 ## Next
-- Push `main` to GitHub (cashroy/cash-synth) and update the website if wanted.
+- Install the released pkg/exe on a clean Mac and a Windows PC and check they show up in a DAW.
+- Signing: Apple Developer ID + notarisation, Windows code-signing, to remove the warnings.
 - Try LAYERS in Logic: Cash Match -> LAYERS, edit layers on the LAYERS page, automate a few layer knobs, check CPU with a 16-note chord.
 - LAYERS ideas: lead/synthbass (91 %) lose ENVELOPE/BRIGHTNESS to unison beating; clap WIDTH 32 (noise layers are mono-ish).
 - Try Cash Match v3 in Logic on your own samples (flute, bass, etc.): HEAR SAMPLE vs HEAR MATCH, DEPOSIT, play other keys, hold long notes.

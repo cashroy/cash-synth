@@ -17,6 +17,21 @@ reverb. On top of that sits **Cash Match**: drop in a sample and the synth rebui
 
 ![Cash Match cheque](Docs/editor-match.png)
 
+![The LAYERS page](Docs/editor-back-layers.png)
+
+## Download
+
+Installers are on the [Releases page](https://github.com/cashroy/cash-synth/releases/latest):
+
+- **macOS 11+** (Apple silicon and Intel): `CashSynth-mac.pkg` installs the VST3, AU and Standalone app.
+- **Windows 10/11** (64-bit): `CashSynth-Setup.exe` installs the VST3 and Standalone app.
+
+They aren't signed by Apple or Microsoft yet: on a Mac use *System Settings > Privacy & Security >
+Open Anyway*; on Windows click *More info > Run anyway* if SmartScreen appears.
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a `v*` tag is pushed:
+`packaging/mac/build_pkg.sh` makes the pkg, `packaging/windows/CashSynth.iss` (Inno Setup) the exe.
+
 ## Formats
 
 - **VST3** (macOS, Windows)
