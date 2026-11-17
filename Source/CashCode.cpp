@@ -30,6 +30,7 @@ namespace
             case 6:  return ParameterMap::numParamsV6;
             case 7:  return ParameterMap::numParamsV7;
             case 8:  return ParameterMap::numParamsV8;
+            case 9:  return ParameterMap::numParamsV9;
             default: return ParameterMap::numParams;
         }
     }

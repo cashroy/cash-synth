@@ -249,33 +249,35 @@ void SynthEngine::readParameters()
         L.pitchTime = v (3);
         for (int l = 0; l < layers::numTone; ++l)
         {
-            const int b = 4 + l * layers::numToneFields;
             auto& t = L.tone[static_cast<size_t> (l)];
             using namespace layers;
-            t.gain = v (b + level);
-            t.pan = v (b + pan);
-            t.semis = static_cast<float> (juce::roundToInt (v (b + octave)) * 12 + juce::roundToInt (v (b + semi))) + v (b + fine) / 100.0f;
-            t.a = v (b + attack); t.d = v (b + decay); t.s = v (b + sustain); t.r = v (b + release);
-            t.type = juce::roundToInt (v (b + fltType));
-            t.cutoffHz = v (b + cutoff);
-            const float r = v (b + reso);
+            auto f = [&] (int field) { return v (toneIndex (l, field)); };
+            t.gain = f (level);
+            t.pan = f (pan);
+            t.semis = static_cast<float> (juce::roundToInt (f (octave)) * 12 + juce::roundToInt (f (semi))) + f (fine) / 100.0f;
+            t.a = f (attack); t.d = f (decay); t.s = f (sustain); t.r = f (release);
+            t.p = curveExponent (f (curve));
+            t.type = juce::roundToInt (f (fltType));
+            t.cutoffHz = f (cutoff);
+            const float r = f (reso);
             t.q = 0.707f + r * r * 14.0f;
-            t.envSemis = v (b + envAmt) * envCutoffRange;
-            t.fa = v (b + fAttack); t.fd = v (b + fDecay); t.fs = v (b + fSustain); t.fr = v (b + fRelease);
-            t.l1p = v (b + l1Pitch) * lfoPitchRange;
-            t.l1l = v (b + l1Level);
-            t.l1c = v (b + l1Cutoff) * lfoCutoffRange;
-            t.l2p = v (b + l2Pitch) * lfoPitchRange;
-            t.l2l = v (b + l2Level);
-            t.l2c = v (b + l2Cutoff) * lfoCutoffRange;
+            t.envSemis = f (envAmt) * envCutoffRange;
+            t.fa = f (fAttack); t.fd = f (fDecay); t.fs = f (fSustain); t.fr = f (fRelease);
+            t.l1p = f (l1Pitch) * lfoPitchRange;
+            t.l1l = f (l1Level);
+            t.l1c = f (l1Cutoff) * lfoCutoffRange;
+            t.l2p = f (l2Pitch) * lfoPitchRange;
+            t.l2l = f (l2Level);
+            t.l2c = f (l2Cutoff) * lfoCutoffRange;
         }
         for (int n = 0; n < layers::numNoise; ++n)
         {
-            const int b = 4 + layers::numTone * layers::numToneFields + n * layers::numNoiseFields;
             auto& z = L.noise[static_cast<size_t> (n)];
             using namespace layers;
-            z.gain = v (b + nLevel); z.centreHz = v (b + nCentre); z.octaves = v (b + nWidth); z.pan = v (b + nPan);
-            z.a = v (b + nAttack); z.d = v (b + nDecay); z.s = v (b + nSustain); z.r = v (b + nRelease);
+            auto f = [&] (int field) { return v (noiseIndex (n, field)); };
+            z.gain = f (nLevel); z.centreHz = f (nCentre); z.octaves = f (nWidth); z.pan = f (nPan);
+            z.a = f (nAttack); z.d = f (nDecay); z.s = f (nSustain); z.r = f (nRelease);
+            z.slope = juce::roundToInt (f (nSlope));
         }
     }
 

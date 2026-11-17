@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-M1-13 shipped (2026-11-18). **M14 LAYERS part 1/2 done** on branch `m14-layers` (2026-11-18, not merged): engine, params, fitting, matcher BOTH mode, minimal cheque switch. Part 2 next (see Next).
+M1-14 done (2026-11-18). M14 LAYERS (parts 1 + 2) merged into local `main` from `m14-layers`; not pushed yet.
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -22,7 +22,7 @@ M1-13 shipped (2026-11-18). **M14 LAYERS part 1/2 done** on branch `m14-layers` 
 11. [x] Delay + reverb after the voices, delay time + pre-delay syncable
 12. [x] Polish: flip animation, knob locks, EFFECTS dot, pluginval, README
 13. [x] Cash Match v3: the Mint (resynthesis from partials + noise)
-14. [~] Cash Match LAYERS: editable patch of synth parts (part 1/2 done: engine, fit, matcher, minimal cheque)
+14. [x] Cash Match LAYERS: editable patch of synth parts (engine, fit, matcher, cheque, LAYERS page)
 
 ## Key decisions
 - Build and test on this Mac (Intel, macOS 26.1); keep the Windows/VS2022 build supported.
@@ -186,6 +186,14 @@ M1-13 shipped (2026-11-18). **M14 LAYERS part 1/2 done** on branch `m14-layers` 
 - **Bench** (12 samples, Debug): EXACT avg 99.4 % (1.72 dB mel). **LAYERS Detail 8: avg 92.6 %** (5.20 dB): cello 94, clap 66, ebass 99, flute 98, guitar 99, kick 88, lead 92, organ 98, piano 95, pluck 97, synthbass 91, violin 94. Detail 3: avg 91.7 % (5.55 dB). Match time EXACT+LAYERS 0.6-17 s, Detail re-fit 0.3-5 s.
 - Limits: clap (noise only: 2 band-passes can't draw its spectrum; multi-burst envelope); kick (flat-then-drop envelope: the exponential ADSR can't hold then fall; a decay-curve control would fix it); unison beating is copied as LFO tremolo/wah.
 
+## LAYERS part 2 (M14, 2026-11-18)
+- Back of the bill has a 3rd page: SYNTH | EFFECTS | LAYERS (lit dot while on). Strip: LAYERS switch + Detail / Pitch Env / Pitch Time, `LayerTabs` (TONE 1-8, NOISE 1-2; dot = sounding), `WaveView` (picked tone layer's table L gold / R faint, or the noise band's response). Under it, the picked layer's knobs: TONE, AMP ENV (+Curve), FILTER, FILTER ENV, LFO 1/2 DEPTH; noise: NOISE (+Slope), NOISE ENV + a note plate. Each layer has its own sub-page (all ~214 controls exist; only one layer shows). Layers dim while LAYERS is off and past Detail. Editor feeds `modelSource` = processor's Mint.
+- 10 params appended (293 -> 303, `CashCode::version` 10, **416 chars**; v9 decodes with defaults): `lyrNCurve` (-100..100 %, p = 4^curve, shapes decay AND release: dB = -60 (t/time)^p; 0 = old exponential path exactly) and `lnzNSlope` (6/12/24/48 dB: one band-pass, or 1/2/4 Butterworth HP+LP pairs, corners moved so the cascade is -3 dB at the same edges, RMS-normalised). `layers::toneIndex/noiseIndex` map fields to ParameterMap order (Curve/Slope sit after all v9 params).
+- Why Curve covers the release: the print puts a one-shot's key-up early (kick: frame 42 of 242), so its drop is in the release. Fit tries 6 curves over the whole note, keeps one only if >= 15 % better. Noise fit: centre/width/slope per noise layer by coordinate search on the Mint's band spectrum (dB, 60 dB range). Matcher polish also nudges the top-3 layers' Curve.
+- **Bench** (12 samples, Debug): EXACT 99.4 % (1.72 dB), **LAYERS d8 95.5 %** (4.96 dB; was 92.6), d3 94.6 %. Clap 66 -> 90, kick 88 -> 97; weakest now lead / synthbass 91.
+- **CPU, Release** (`[.layerscpu]`, worst case: 8 tone layers with moving filters + 2 noise layers at 48 dB, 16 voices, 44.1 kHz, 512 blocks): 27-31 % of one core (3 runs).
+- Tests: control for every parameter (no LAYERS exclusion; `hasControlFor`), env curve (decay/release/no jump), noise slopes, fit (curve + slope), LAYERS page UI, v9 golden code. Snapshots `Docs/editor-back-layers.png`, `-back-noise.png`.
+
 ## Polish (M12) + Mint polish (2026-11-18)
 - Flip: `cash::FlipCard` (BillComponents) animates the bill turning over, only while the editor is on screen; off screen the flip is instant.
 - Locks: a padlock per knob (`Source/ParamLocks.h`, owned by the processor, saved as the `locks` attribute in project state). **Invest and Jackpot always respect locks; Cash Match does not** (it must set every knob to match). **Section switches have no padlock.**
@@ -216,7 +224,8 @@ M10 verified 2026-11-17: clean build (-Werror), 87 tests pass (~24 s), no JUCE a
 M11 verified 2026-11-17: clean build (-Werror), 97 tests pass (~33 s), no JUCE assertions, `auval` PASS, effects-page snapshot checked by eye.
 M13 verified 2026-11-17: clean build (-Werror), 110 tests pass (incl. 8 Mint cases), no JUCE assertions, `auval` PASS, effects-page snapshot (MINT row) checked by eye.
 M12 + Mint polish verified 2026-11-18: clean build (-Werror), 113 tests pass, `auval` PASS, pluginval strictness 10 PASS (VST3 + AU), snapshots regenerated (MINT row has 7 knobs).
-M14 part 1 verified 2026-11-18: clean build (-Werror), 121 tests pass (8 new LAYERS cases), `auval` PASS. "Control for every parameter" checks exclude the 204 LAYERS params until part 2 adds their UI.
+M14 part 1 verified 2026-11-18: clean build (-Werror), 121 tests pass (8 new LAYERS cases), `auval` PASS.
+M14 part 2 verified 2026-11-18: clean build (-Werror), 125 tests pass (ctest -j4; at -j8 the big-model save timing check can miss its 2 s limit under load), `auval` PASS, pluginval 1.0.4 strictness 10 PASS (VST3 + AU), snapshots checked by eye.
 
 ## Plan: tempo sync + effects (asked 2026-11-17)
 - LFO part done in M10 (see above). M11: delay time and reverb pre-delay get the same TIME/SYNC switch and note list (`tempo::noteQuarters`).
@@ -230,7 +239,9 @@ M14 part 1 verified 2026-11-18: clean build (-Werror), 121 tests pass (8 new LAY
 - Tests: rate = BPM-derived Hz for each note value at several BPMs incl. odd time signatures; phase locked to PPQ; BPM change mid-note is smooth; old codes/projects load unsynced; delay echo lands at the synced time; reverb tail decays, mix 0 = dry, effects off = bit-identical to M9 renders (golden renders).
 
 ## Next
-- **M14 part 2**: LAYERS UI on the bill (layer strip: pick layer 1-8 / noise, its knobs, Detail), wavetable view; Logic check (CPU with 8 layers x 16 voices, automation); ideas: per-layer decay curve (kick), steeper noise bands (clap).
+- Push `main` to GitHub (cashroy/cash-synth) and update the website if wanted.
+- Try LAYERS in Logic: Cash Match -> LAYERS, edit layers on the LAYERS page, automate a few layer knobs, check CPU with a 16-note chord.
+- LAYERS ideas: lead/synthbass (91 %) lose ENVELOPE/BRIGHTNESS to unison beating; clap WIDTH 32 (noise layers are mono-ish).
 - Try Cash Match v3 in Logic on your own samples (flute, bass, etc.): HEAR SAMPLE vs HEAR MATCH, DEPOSIT, play other keys, hold long notes.
 - Ideas: formant-preserving transposition for far keys; inharmonic (bell) partial tracking.
 - Try in Logic: Cash Match on real samples (long pads, stereo chorus, vibrato leads); check CPU while matching during playback.

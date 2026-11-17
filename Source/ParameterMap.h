@@ -19,7 +19,7 @@ struct ParamSpec
 class ParameterMap
 {
 public:
-    static constexpr int numParams = 293;
+    static constexpr int numParams = 303;
     static constexpr int numParamsV1 = 31; // CashCode v1 carried only the first 31
     static constexpr int numParamsV2 = 39; // v2 (M6) the first 39
     static constexpr int numParamsV3 = 50; // v3 (M7) the first 50; v4 (M8) adds the section switches
@@ -28,6 +28,7 @@ public:
     static constexpr int numParamsV6 = 81; // v6 the first 81; v7 (M13) adds the Mint
     static constexpr int numParamsV7 = 87; // v7 the first 87; v8 adds Mint Start + Mint Loop
     static constexpr int numParamsV8 = 89; // v8 the first 89; v9 (M14) adds the LAYERS (204 params)
+    static constexpr int numParamsV9 = 293; // v9 the first 293; v10 adds layer Decay Curve (8) + noise Slope (2)
 
     static const std::array<ParamSpec, numParams>& specs();
     static const ParamSpec& spec (int index) { return specs()[static_cast<size_t> (index)]; }

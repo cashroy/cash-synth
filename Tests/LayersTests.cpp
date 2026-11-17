@@ -9,6 +9,7 @@
 #include "SoundPrint.h"
 #include "Mint.h"
 #include "Layers.h"
+#include "PluginEditor.h"
 
 namespace
 {
@@ -559,4 +560,299 @@ TEST_CASE ("Layer params are automatable, named and in range", "[layers][params]
         CHECK (param->getName (64).isNotEmpty());
         CHECK (cash::ParameterMap::spec (cash::ParameterMap::indexOf (id)).weight == 0.0f); // money moves leave layers alone
     }
+}
+
+//============================================================================== M14 part 2
+namespace
+{
+// RBJ biquad (tests only): a steep reference band for the noise fit.
+struct Biquad
+{
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+    static Biquad make (bool high, double hz, double rate)
+    {
+        const double w = juce::MathConstants<double>::twoPi * hz / rate, c = std::cos (w), al = std::sin (w) / (2.0 * 0.70710678);
+        const double a0 = 1.0 + al;
+        Biquad q;
+        q.b0 = (high ? (1.0 + c) / 2.0 : (1.0 - c) / 2.0) / a0;
+        q.b1 = (high ? -(1.0 + c) : 1.0 - c) / a0;
+        q.b2 = q.b0;
+        q.a1 = -2.0 * c / a0;
+        q.a2 = (1.0 - al) / a0;
+        return q;
+    }
+    double run (double x)
+    {
+        const double y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+};
+
+float fitValue (const L::Fit& fit, const char* id)
+{
+    for (const auto& [k, v] : fit.values)
+        if (juce::StringRef (k) == juce::StringRef (id))
+            return v;
+    FAIL ("missing " << id);
+    return 0.0f;
+}
+
+bool shownIn (const juce::Component* c, const juce::Component* top)
+{
+    for (; c != nullptr && c != top; c = c->getParentComponent())
+        if (! c->isVisible())
+            return false;
+    return c == top;
+}
+
+float envDbAt (float curve, double seconds, float decay = 0.4f)
+{
+    L::Env e;
+    e.set (0.0005f, decay, 0.0f, 1.0f, sr, L::curveExponent (curve));
+    e.on();
+    float v = 0.0f;
+    const int n = static_cast<int> ((0.0005 + seconds) * sr);
+    for (int i = 0; i < n; ++i)
+        v = e.next();
+    return 20.0f * std::log10 (juce::jmax (1.0e-9f, v));
+}
+}
+
+TEST_CASE ("Env curve: hold then drop, or drop then linger; -60 dB at the decay / release time", "[layers][engine]")
+{
+    // dB(t) = -60 (t / decay)^p, p = 4^curve.
+    CHECK (std::abs (envDbAt (0.0f, 0.2) + 30.0f) < 0.5f);   // exponential: half way = -30 dB
+    CHECK (std::abs (envDbAt (1.0f, 0.2) + 3.75f) < 0.5f);   // p = 4: still loud half way (a kick's body)
+    CHECK (std::abs (envDbAt (-1.0f, 0.2) + 50.45f) < 1.0f); // p = 1/4: gone fast, then a long tail
+    for (float c : { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f })
+    {
+        INFO (c);
+        CHECK (std::abs (envDbAt (c, 0.4) + 60.0f) < 1.5f);
+    }
+
+    // The release takes the same curve: from wherever it starts, -60 dB at the release time.
+    for (float c : { -1.0f, 0.0f, 1.0f })
+    {
+        INFO (c);
+        L::Env e;
+        e.set (0.0005f, 1.0f, 0.5f, 0.4f, sr, L::curveExponent (c));
+        e.on();
+        for (int i = 0; i < static_cast<int> (0.01 * sr); ++i) e.next();
+        const float start = e.value;
+        e.off();
+        float half = 0.0f, full = 0.0f;
+        for (int i = 1; i <= static_cast<int> (0.4 * sr); ++i)
+        {
+            const float v = e.next();
+            if (i == static_cast<int> (0.2 * sr)) half = v;
+            full = v;
+        }
+        const float expectHalf = -60.0f * std::pow (0.5f, L::curveExponent (c));
+        CHECK (std::abs (20.0f * std::log10 (half / start) - expectHalf) < 1.0f);
+        CHECK ((e.stage == L::Env::idle || std::abs (20.0f * std::log10 (full / start) + 60.0f) < 1.5f));
+    }
+
+    // Changing the curve mid-decay doesn't jump.
+    L::Env e;
+    e.set (0.0005f, 0.5f, 0.2f, 1.0f, sr);
+    e.on();
+    float v = 0.0f;
+    for (int i = 0; i < static_cast<int> (0.1 * sr); ++i)
+        v = e.next();
+    e.set (0.0005f, 0.5f, 0.2f, 1.0f, sr, L::curveExponent (0.8f));
+    const float after = e.next();
+    CHECK (std::abs (after - v) < 0.01f);
+
+    // Through the engine: a layer with a +100 % curve holds its level far longer.
+    Plugin pl;
+    auto patch = layersPatch (pl.p);
+    setReal (pl.p, patch, L::toneId (0, L::decay), 0.4f);
+    setReal (pl.p, patch, L::toneId (0, L::sustain), 0.0f);
+    pl.p.setPatch (patch, "exp");
+    const auto plain = playNote (pl.p, 60, 0.8, 0.8);
+    setReal (pl.p, patch, L::toneId (0, L::curve), 1.0f);
+    pl.p.setPatch (patch, "curved");
+    const auto held = playNote (pl.p, 60, 0.8, 0.8);
+    CHECK (rms (held, 0.15, 0.25) > 4.0f * rms (plain, 0.15, 0.25));
+    CHECK (rms (held, 0.5, 0.8) < 0.02f); // and still gone after the decay time
+
+}
+
+TEST_CASE ("Noise slope: steeper band edges at the same loudness", "[layers][engine]")
+{
+    // The response: -3 dB at both edges whatever the slope; far outside, much lower when steep.
+    for (int slope = 0; slope < L::numSlopes; ++slope)
+    {
+        INFO (slope);
+        CHECK (std::abs (10.0f * std::log10 (L::noiseResponse (1000.0f / std::sqrt (2.0f), 1000.0f, 1.0f, slope, sr)) + 3.0f) < 0.6f);
+        CHECK (std::abs (10.0f * std::log10 (L::noiseResponse (1000.0f * std::sqrt (2.0f), 1000.0f, 1.0f, slope, sr)) + 3.0f) < 0.6f);
+    }
+    CHECK (L::noiseResponse (5657.0f, 1000.0f, 1.0f, 3, sr) < 1.0e-4f * L::noiseResponse (5657.0f, 1000.0f, 1.0f, 0, sr) * 1000.0f);
+    CHECK (L::noiseResponse (5657.0f, 1000.0f, 1.0f, 3, sr) < 1.0e-6f);
+
+    Plugin pl;
+    auto patch = layersPatch (pl.p);
+    patch[idx (L::toneId (0, L::level))] = 0.0f;
+    setReal (pl.p, patch, L::noiseId (0, L::nLevel), 0.5f);
+    setReal (pl.p, patch, L::noiseId (0, L::nCentre), 1000.0f);
+    setReal (pl.p, patch, L::noiseId (0, L::nWidth), 1.0f);
+    setReal (pl.p, patch, L::noiseId (0, L::nAttack), 0.001f);
+    setReal (pl.p, patch, L::noiseId (0, L::nSustain), 1.0f);
+    std::array<float, L::numSlopes> level {}, high {};
+    for (int slope = 0; slope < L::numSlopes; ++slope)
+    {
+        patch[idx (L::noiseId (0, L::nSlope))] = static_cast<float> (slope) / static_cast<float> (L::numSlopes - 1);
+        pl.p.setPatch (patch, "slope");
+        const auto out = playNote (pl.p, 60, 1.0, 1.0);
+        level[static_cast<size_t> (slope)] = rms (out, 0.2, 0.9);
+        // Energy above ~6 kHz (an 8th-order high-pass) vs all of it.
+        std::array<Biquad, 4> hp;
+        for (auto& q : hp) q = Biquad::make (true, 6000.0, sr);
+        double hi = 0.0, all = 0.0;
+        for (int i = static_cast<int> (0.2 * sr); i < static_cast<int> (0.9 * sr); ++i)
+        {
+            double x = out.getSample (0, i);
+            all += x * x;
+            for (auto& q : hp) x = q.run (x);
+            hi += x * x;
+        }
+        high[static_cast<size_t> (slope)] = static_cast<float> (hi / all);
+    }
+    for (int slope = 1; slope < L::numSlopes; ++slope)
+    {
+        INFO (slope);
+        CHECK (std::abs (20.0f * std::log10 (level[static_cast<size_t> (slope)] / level[0])) < 2.0f); // RMS-normalised
+        CHECK (high[static_cast<size_t> (slope)] < high[static_cast<size_t> (slope - 1)]);
+    }
+    CHECK (high[3] < 0.05f * high[0]);
+}
+
+TEST_CASE ("Fitting: a hold-then-drop body gets a decay curve, a steep band a steep slope", "[layers][fit]")
+{
+    const int n = static_cast<int> (0.7 * sr);
+    // A kick-ish body: 110 Hz (harmonics 1-3) that holds, then falls 60 dB at ~0.35 s.
+    {
+        juce::AudioBuffer<float> body (2, n);
+        for (int i = 0; i < n; ++i)
+        {
+            const double t = i / sr;
+            const double env = std::pow (10.0, -3.0 * std::pow (t / 0.35, 3.0)) * juce::jmin (1.0, t / 0.002);
+            double s = 0.0;
+            for (int h = 1; h <= 3; ++h)
+                s += 0.5 / h * std::sin (juce::MathConstants<double>::twoPi * 110.0 * h * t);
+            body.setSample (0, i, static_cast<float> (0.8 * env * s));
+            body.setSample (1, i, static_cast<float> (0.8 * env * s));
+        }
+        Plugin pl;
+        auto& m = pl.p.getMatcher();
+        REQUIRE (m.setTarget (body, sr, "Body").isEmpty());
+        const auto model = m.getMintModel();
+        REQUIRE (model != nullptr);
+        const auto fit = L::fit (*model, m.getTargetPrint().midiNote, 1, {});
+        CHECK (fitValue (fit, L::toneId (0, L::curve)) >= 0.25f); // holds, then drops
+    }
+    // A noise band with brick-ish edges at 1.5 - 3 kHz (4 HP + 4 LP Butterworth pairs).
+    {
+        juce::AudioBuffer<float> noise (2, n);
+        juce::Random rng (11);
+        std::array<Biquad, 8> band;
+        for (int k = 0; k < 4; ++k)
+        {
+            band[static_cast<size_t> (k)] = Biquad::make (true, 1500.0 * 0.66, sr);
+            band[static_cast<size_t> (k + 4)] = Biquad::make (false, 3000.0 / 0.66, sr);
+        }
+        for (int i = 0; i < n; ++i)
+        {
+            double z = rng.nextFloat() * 2.0 - 1.0;
+            for (auto& q : band)
+                z = q.run (z);
+            const auto v = static_cast<float> (2.0 * z * std::exp (-(i / sr) / 0.3) * juce::jmin (1.0, i / (0.003 * sr)));
+            noise.setSample (0, i, v);
+            noise.setSample (1, i, v);
+        }
+        Plugin pl;
+        auto& m = pl.p.getMatcher();
+        REQUIRE (m.setTarget (noise, sr, "Band").isEmpty());
+        const auto model = m.getMintModel();
+        REQUIRE (model != nullptr);
+        const int key = m.getTargetPrint().midiNote;
+        const auto fit = L::fit (*model, key, 1, {});
+        CHECK (fitValue (fit, L::noiseId (0, L::nLevel)) > 0.0f);
+        CHECK (fitValue (fit, L::noiseId (0, L::nSlope)) >= 2.0f); // 24 or 48 dB edges
+        const float centre = fitValue (fit, L::noiseId (0, L::nCentre)) * std::exp2 ((static_cast<float> (key) - 60.0f) / 12.0f);
+        CHECK (std::abs (std::log2 (centre / 2121.0f)) < 0.5f);
+        CHECK (fitValue (fit, L::noiseId (0, L::nWidth)) < 2.0f);
+    }
+}
+
+TEST_CASE ("LAYERS page on the back of the bill", "[layers][ui]")
+{
+    Plugin pl;
+    auto editor = std::unique_ptr<juce::AudioProcessorEditor> (pl.p.createEditor());
+    auto* ed = dynamic_cast<CashSynthAudioProcessorEditor*> (editor.get());
+    REQUIRE (ed != nullptr);
+    auto& panel = ed->getAdvancedPanel();
+    auto& tabs = ed->getBack().getPageTabs();
+    ed->flip();
+    ed->getBack().resized();
+
+    // Every LAYERS param has a control, and only the picked layer's are on show.
+    for (auto* id : L::ids())
+    {
+        INFO (id);
+        CHECK (panel.hasControlFor (id));
+    }
+    auto* cutoff1 = panel.getKnob (L::toneId (0, L::cutoff));
+    auto* cutoff4 = panel.getKnob (L::toneId (3, L::cutoff));
+    auto* slope1 = panel.getMenu (L::noiseId (0, L::nSlope));
+    REQUIRE (cutoff1 != nullptr);
+    REQUIRE (cutoff4 != nullptr);
+    REQUIRE (slope1 != nullptr);
+    CHECK (panel.getMenu (L::toneId (0, L::fltType)) != nullptr);
+    CHECK (panel.getKnob (L::toneId (5, L::curve)) != nullptr);
+    CHECK (panel.getSwitch (L::layersOn) != nullptr);
+    CHECK_FALSE (shownIn (cutoff1, ed));
+
+    tabs.choose (cash::AdvancedPanel::layersPage);
+    CHECK (panel.getPage() == cash::AdvancedPanel::layersPage);
+    CHECK (shownIn (&panel.getLayerTabs(), ed));
+    CHECK (shownIn (&panel.getWaveView(), ed));
+    CHECK (shownIn (panel.getKnob (L::detail), ed));
+    CHECK (shownIn (cutoff1, ed));
+    CHECK_FALSE (shownIn (cutoff4, ed));
+    CHECK_FALSE (shownIn (panel.getKnob (cash::param::filterCutoff), ed));
+
+    // Clicking a tab picks the layer.
+    const auto tab4 = panel.getLayerTabs().tabArea (3).getCentre();
+    CHECK (panel.getLayerTabs().layerAt (tab4) == 3);
+    CHECK (panel.getLayerTabs().layerAt ({ 1.0f, 1.0f }) == -1);
+    panel.selectLayer (panel.getLayerTabs().layerAt (tab4));
+    CHECK (panel.getSelectedLayer() == 3);
+    CHECK (shownIn (cutoff4, ed));
+    CHECK_FALSE (shownIn (cutoff1, ed));
+    panel.selectLayer (L::numTone); // noise 1
+    CHECK (shownIn (slope1, ed));
+    CHECK_FALSE (shownIn (cutoff4, ed));
+
+    // Off = the layer knobs dimmed (still editable); on: tone layers past Detail stay dimmed.
+    CHECK (panel.getControlAlpha (L::toneId (0, L::level)) < 0.5f);
+    CHECK_FALSE (tabs.isLayersLit());
+    CHECK_FALSE (panel.getLayerTabs().isLit (0));
+    panel.getSwitch (L::layersOn)->toggle();
+    pl.p.getState().getParameter (L::detail)->setValueNotifyingHost (pl.p.getState().getParameter (L::detail)->convertTo0to1 (2.0f));
+    CHECK (tabs.isLayersLit());
+    CHECK (panel.getControlAlpha (L::toneId (0, L::level)) == 1.0f);
+    CHECK (panel.getControlAlpha (L::toneId (1, L::level)) == 1.0f);
+    CHECK (panel.getControlAlpha (L::toneId (2, L::level)) < 0.5f);
+    CHECK (panel.getControlAlpha (L::noiseId (1, L::nLevel)) == 1.0f);
+    CHECK (panel.getLayerTabs().isLit (0));
+    CHECK_FALSE (panel.getLayerTabs().isLit (2));          // past Detail
+    CHECK_FALSE (panel.getLayerTabs().isLit (L::numTone)); // noise level 0
+
+    // The wave view follows the processor's model (none yet: the plain saw).
+    panel.selectLayer (0);
+    panel.getWaveView().refresh();
+    CHECK (panel.getWaveView().getShownModel() == pl.p.getMint().get());
 }

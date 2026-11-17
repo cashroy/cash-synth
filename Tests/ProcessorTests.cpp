@@ -46,5 +46,12 @@ TEST_CASE ("Editor builds a control for every parameter", "[editor]")
 
     auto* cashEditor = dynamic_cast<CashSynthAudioProcessorEditor*> (editor.get());
     REQUIRE (cashEditor != nullptr);
-    CHECK (cashEditor->getAdvancedPanel().getNumControls() == p.getParameters().size() - cash::layers::numParams);  // M14: LAYERS controls come in part 2
+    CHECK (cashEditor->getAdvancedPanel().getNumControls() == p.getParameters().size());
+    // One each, LAYERS included (M14 part 2): every parameter has its own control.
+    for (auto* param : p.getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+        {
+            INFO (ranged->paramID);
+            CHECK (cashEditor->getAdvancedPanel().hasControlFor (ranged->paramID));
+        }
 }

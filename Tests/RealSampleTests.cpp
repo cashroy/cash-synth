@@ -5,6 +5,8 @@
 // <name>.match.wav so it can be listened to.
 #include <catch2/catch_test_macros.hpp>
 #include "PluginProcessor.h"
+#include "Parameters.h"
+#include "Layers.h"
 #include "CashMatch.h"
 #include "SoundPrint.h"
 #include "Mint.h"
@@ -255,4 +257,62 @@ TEST_CASE ("Mint CPU with 16 voices", "[.mintcpu]")
     const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
     std::printf ("%s: %d partials, 16 voices, 5 s of audio in %.0f ms (%.1f%% of real time), %d voices active at the end\n",
                  name.toRawUTF8(), p.getMint()->numPartials, ms, ms / 50.0, p.getEngine().getNumActiveVoices());
+}
+
+// M14 part 2: LAYERS worst case. 16 voices, all 8 tone layers on with their filters
+// moving (env + LFO 2 on the cutoff), curved envelopes, both noise layers at 48 dB edges.
+// Run in Release: ./build-release/CashSynthTests "[.layerscpu]"
+TEST_CASE ("LAYERS CPU with 8 layers x 16 voices", "[.layerscpu]")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    namespace L = cash::layers;
+    using namespace cash::param;
+    CashSynthAudioProcessor p;
+    auto patch = cash::defaultPatch (p.getState());
+    const auto set = [&] (const char* id, float real)
+    {
+        auto* q = p.getState().getParameter (id);
+        patch[static_cast<size_t> (cash::ParameterMap::indexOf (id))] = q->convertTo0to1 (real);
+    };
+    for (auto* id : { osc1On, osc2On, subNoiseOn, filterOn, filterEnvOn, driveOn, lfo1On, unisonOn, glideOn })
+        set (id, 0.0f);
+    set (lfo2On, 1.0f);
+    set (L::layersOn, 1.0f);
+    set (L::detail, 8.0f);
+    set (masterGain, 0.1f);
+    for (int l = 0; l < L::numTone; ++l)
+    {
+        set (L::toneId (l, L::level), 0.5f);
+        set (L::toneId (l, L::octave), static_cast<float> (l % 3 - 1));
+        set (L::toneId (l, L::cutoff), 1500.0f + 300.0f * static_cast<float> (l));
+        set (L::toneId (l, L::reso), 0.3f);
+        set (L::toneId (l, L::envAmt), 0.3f);
+        set (L::toneId (l, L::l2Cutoff), 0.2f);
+        set (L::toneId (l, L::sustain), 0.6f);
+        set (L::toneId (l, L::curve), 0.5f);
+    }
+    for (int n = 0; n < L::numNoise; ++n)
+    {
+        set (L::noiseId (n, L::nLevel), 0.3f);
+        set (L::noiseId (n, L::nSlope), 3.0f);
+        set (L::noiseId (n, L::nSustain), 0.5f);
+    }
+    p.setPatch (patch, "worst case");
+    constexpr int block = 512;
+    p.prepareToPlay (44100.0, block);
+    juce::AudioBuffer<float> buf (2, block);
+    juce::MidiBuffer on;
+    for (int k = 0; k < 16; ++k)
+        on.addEvent (juce::MidiMessage::noteOn (1, 36 + k * 2, 1.0f), 0);
+    const int blocks = static_cast<int> (5.0 * 44100.0 / block);
+    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+    for (int b = 0; b < blocks; ++b)
+    {
+        juce::MidiBuffer none;
+        p.processBlock (buf, b == 0 ? on : none);
+    }
+    const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
+    std::printf ("LAYERS: 8 tone + 2 noise layers, 16 voices, 5 s of audio in %.0f ms (%.1f%% of real time), %d voices active, peak %.3f\n",
+                 ms, ms / 50.0, p.getEngine().getNumActiveVoices(), buf.getMagnitude (0, block));
+    CHECK (p.getEngine().getNumActiveVoices() == 16);
 }

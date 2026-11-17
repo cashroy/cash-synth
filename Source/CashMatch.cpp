@@ -538,6 +538,7 @@ void CashMatcher::searchLayers (const MintModel& model)
             add (layers::toneId (l, layers::decay), true);
             add (layers::toneId (l, layers::sustain), false);
             add (layers::toneId (l, layers::release), true);
+            add (layers::toneId (l, layers::curve), false); // M14 part 2: decay shape
         }
     }
     for (int n = 0; n < layers::numNoise; ++n)

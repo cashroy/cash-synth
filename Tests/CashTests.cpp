@@ -65,8 +65,9 @@ size_t idx (const char* id)
 }
 
 // v6 (M11). Older codes are checked for back-compat in MatchTests / LeadTests / AutomationTests / TempoTests / EffectsTests.
-const juce::String goldenCode = "$K4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-0080-V5JG-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-000M-P03C-VW0C-J001-9C06-SQR0-S400-2BE0";
+const juce::String goldenCodeV9 = "$K4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-0080-V5JG-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-000M-P03C-VW0C-J001-9C06-SQR0-S400-2BE0";
 // v8 (M13 polish), before M14 LAYERS: must still decode, layers off.
+const juce::String goldenCode = "$N4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-0080-V5JG-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-040G-1P80-DKFS-HJ3Z-G101-PDW0-6904-0G20-8104-0G1P-80DK-FSHJ-3ZG1-01PD-W069-040G-2081-000M-P03C-VW0C-J001-9C06-SQR0-S40G-2081-040G-2080-0MPH";
 const juce::String goldenCodeV8 = "$H4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2001-01W6-M";
 // v7 (M13), before Mint Start / Loop: must still decode to today's default sound.
 const juce::String goldenCodeV7 = "$F4S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-003Z-WTD8-NEBS-02S8-1036-9DDZ-SKCS-040G-2021-AG";
@@ -172,8 +173,15 @@ TEST_CASE ("CashCode format is pinned", "[cashcode]")
     Plugin pl;
     const auto code = cash::CashCode::encode (cash::defaultPatch (pl.p.getState()));
     CHECK (code.startsWithChar ('$'));
-    CHECK (code.removeCharacters ("$-").length() == 404); // v9 (M14): the 204 LAYERS params made codes long
+    CHECK (code.removeCharacters ("$-").length() == 416); // v9 (M14): the 204 LAYERS params made codes long (404); v10 +10 params = 416
     CHECK (code == goldenCode);
+
+    // v9 codes still decode: layer Curve and noise Slope come from the fallback (exponential, 6 dB).
+    const auto v9 = cash::CashCode::decode (goldenCodeV9, cash::defaultPatch (pl.p.getState()));
+    REQUIRE (v9.has_value());
+    CHECK (cash::samePatch (*v9, cash::defaultPatch (pl.p.getState()), continuousTolerance));
+    for (int k = cash::ParameterMap::numParamsV9; k < cash::ParameterMap::numParams; ++k)
+        CHECK ((*v9)[static_cast<size_t> (k)] == cash::defaultPatch (pl.p.getState())[static_cast<size_t> (k)]);
 
     // v6 (M11) codes still decode: the Mint params come from the fallback (off).
     const auto v6 = cash::CashCode::decode (goldenCodeV6, cash::defaultPatch (pl.p.getState()));

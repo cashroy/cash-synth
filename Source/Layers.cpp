@@ -8,33 +8,50 @@ namespace
     const char* const toneNames[numToneFields] = {
         "Level", "Pan", "Octave", "Semi", "Fine", "Attack", "Decay", "Sustain", "Release",
         "FltType", "Cutoff", "Reso", "EnvAmt", "FltAttack", "FltDecay", "FltSustain", "FltRelease",
-        "Lfo1Pitch", "Lfo1Level", "Lfo1Cutoff", "Lfo2Pitch", "Lfo2Level", "Lfo2Cutoff"
+        "Lfo1Pitch", "Lfo1Level", "Lfo1Cutoff", "Lfo2Pitch", "Lfo2Level", "Lfo2Cutoff", "Curve"
     };
     const char* const toneLabels[numToneFields] = {
         "Level", "Pan", "Octave", "Semi", "Fine", "Attack", "Decay", "Sustain", "Release",
         "Filter Type", "Cutoff", "Resonance", "Env Amount", "Filter Attack", "Filter Decay", "Filter Sustain", "Filter Release",
-        "LFO 1 Pitch", "LFO 1 Level", "LFO 1 Cutoff", "LFO 2 Pitch", "LFO 2 Level", "LFO 2 Cutoff"
+        "LFO 1 Pitch", "LFO 1 Level", "LFO 1 Cutoff", "LFO 2 Pitch", "LFO 2 Level", "LFO 2 Cutoff", "Env Curve"
     };
-    const char* const noiseNames[numNoiseFields] = { "Level", "Centre", "Width", "Attack", "Decay", "Sustain", "Release", "Pan" };
+    const char* const noiseNames[numNoiseFields] = { "Level", "Centre", "Width", "Attack", "Decay", "Sustain", "Release", "Pan", "Slope" };
 
+    // ids() order (= ParameterMap order, append-only): the shared four, every v9 tone
+    // field, every v9 noise field, then (v10) each tone layer's Curve and each noise layer's Slope.
     struct IdStore
     {
+        struct Slot { bool noise; int layer, field; };
         std::vector<std::string> strings;
         std::vector<const char*> all, tone, noise;
+        std::vector<Slot> slots;              // per ids() index (from 4)
+        std::vector<int> toneAt, noiseAt;     // [layer * fields + field] -> ids() index
         IdStore()
         {
-            strings.reserve (numParams);
             for (int l = 0; l < numTone; ++l)
                 for (int f = 0; f < numToneFields; ++f)
-                    strings.push_back ("lyr" + std::to_string (l + 1) + toneNames[f]);
+                    if (f != curve) slots.push_back ({ false, l, f });
             for (int l = 0; l < numNoise; ++l)
                 for (int f = 0; f < numNoiseFields; ++f)
-                    strings.push_back ("lnz" + std::to_string (l + 1) + noiseNames[f]);
+                    if (f != nSlope) slots.push_back ({ true, l, f });
+            for (int l = 0; l < numTone; ++l) slots.push_back ({ false, l, curve });
+            for (int l = 0; l < numNoise; ++l) slots.push_back ({ true, l, nSlope });
+
+            strings.reserve (slots.size());
+            for (const auto& s : slots)
+                strings.push_back ((s.noise ? "lnz" : "lyr") + std::to_string (s.layer + 1) + (s.noise ? noiseNames[s.field] : toneNames[s.field]));
             all = { layersOn, detail, pitchAmt, pitchTime };
-            for (size_t i = 0; i < strings.size(); ++i)
+            tone.assign (static_cast<size_t> (numTone * numToneFields), nullptr);
+            noise.assign (static_cast<size_t> (numNoise * numNoiseFields), nullptr);
+            toneAt.assign (tone.size(), -1);
+            noiseAt.assign (noise.size(), -1);
+            for (size_t i = 0; i < slots.size(); ++i)
             {
+                const auto& s = slots[i];
+                const auto k = static_cast<size_t> (s.layer * (s.noise ? static_cast<int> (numNoiseFields) : static_cast<int> (numToneFields)) + s.field);
+                (s.noise ? noise : tone)[k] = strings[i].c_str();
+                (s.noise ? noiseAt : toneAt)[k] = static_cast<int> (all.size());
                 all.push_back (strings[i].c_str());
-                (i < static_cast<size_t> (numTone * numToneFields) ? tone : noise).push_back (strings[i].c_str());
             }
         }
     };
@@ -70,16 +87,19 @@ namespace
 
     float fastExp2 (float x) { return std::exp2 (x); }
 
+    // n cascaded 2nd-order Butterworth stages are -3 dB where x^4 = 2^(1/n) - 1 (x = f / corner).
+    float stageCorner (int n) { return std::pow (std::exp2 (1.0f / static_cast<float> (n)) - 1.0f, 0.25f); }
+
     // ---- fitting helpers
     float toDb (float a) { return a > 1.0e-6f ? 20.0f * std::log10 (a) : -120.0f; }
 
-    struct Adsr { float a = 0.001f, d = 1.0f, s = 1.0f, r = 0.3f, gain = 1.0f; };
+    struct Adsr { float a = 0.001f, d = 1.0f, s = 1.0f, r = 0.3f, gain = 1.0f, curve = 0.0f; }; // curve: the Decay Curve param (-1..1)
 
     // Fits the exponential ADSR (Env) to a curve (peak ~1) with the key held for `hold` frames.
     // dB = true compares levels in dB (amplitude) and also fits an overall gain (`gain`,
     // the envelope's peak relative to the curve's); false compares linearly (filter envelopes).
     // Attack, decay and sustain are searched together, so a late wobble peak can't pass for the attack.
-    Adsr fitAdsr (const std::vector<float>& y, int hold, double dt, bool dB)
+    Adsr fitAdsr (const std::vector<float>& y, int hold, double dt, bool dB, bool allowCurve = false)
     {
         Adsr out;
         const int T = static_cast<int> (y.size());
@@ -164,35 +184,84 @@ namespace
                     const auto err = static_cast<float> (se2 - 2.0 * off * se + off * off * sw);
                     if (err < best) { best = err; out.a = a; out.d = d; out.s = s; bestOffset = static_cast<float> (off); }
                 }
-        out.gain = dB ? std::pow (10.0f, bestOffset / 20.0f) : 1.0f;
-
-        // Release from the level the model reaches at key-up.
-        const float atHold = model (hold, out.a, out.d, out.s) * out.gain;
+        // The model's level at key-up, then the release from there (decay and release
+        // share the curve exponent p: dB falls as -60 (t / time)^p).
+        auto levelAt = [dt] (int t, float a, float d, float s, float p)
+        {
+            const double since = t * dt - a;
+            return since <= 0.0 ? static_cast<float> (juce::jmax (0.0, t * dt) / a)
+                                : static_cast<float> (s + (1.0 - s) * std::exp (-6.9078 * std::pow (since / d, static_cast<double> (p))));
+        };
         const auto relIdx = pick (hold, T, 200);
-        if (relIdx.size() < 2)
+        auto fitRelease = [&] (float atHold, float p, float& rOut)
         {
-            out.r = 0.05f;
-            return out;
-        }
-        best = std::numeric_limits<float>::max();
-        for (float r : times)
-        {
-            float e = 0.0f;
-            for (int t : relIdx)
+            float bestR = std::numeric_limits<float>::max();
+            rOut = 0.05f;
+            if (relIdx.size() < 2)
+                return 0.0f;
+            for (float r : times)
             {
-                const float tv = y[static_cast<size_t> (t)];
-                const float mv = atHold * static_cast<float> (std::exp (-6.9078 * (t - hold) * dt / r));
-                if (dB)
+                float e = 0.0f;
+                for (int t : relIdx)
                 {
-                    const float a = juce::jmax (-60.0f, toDb (tv)), b = juce::jmax (-60.0f, toDb (mv));
-                    e += ((a + 60.0f) / 60.0f + 0.15f) * (a - b) * (a - b);
+                    const float tv = y[static_cast<size_t> (t)];
+                    const float mv = atHold * static_cast<float> (std::exp (-6.9078 * std::pow ((t - hold) * dt / r, static_cast<double> (p))));
+                    if (dB)
+                    {
+                        const float a = juce::jmax (-60.0f, toDb (tv)), b = juce::jmax (-60.0f, toDb (mv));
+                        e += ((a + 60.0f) / 60.0f + 0.15f) * (a - b) * (a - b);
+                    }
+                    else
+                    {
+                        e += (tv - mv) * (tv - mv);
+                    }
                 }
-                else
+                if (e < bestR) { bestR = e; rOut = r; }
+            }
+            return bestR;
+        };
+
+        out.gain = dB ? std::pow (10.0f, bestOffset / 20.0f) : 1.0f;
+        const float plainTotal = best + fitRelease (levelAt (hold, out.a, out.d, out.s, 1.0f) * out.gain, 1.0f, out.r);
+
+        // dB only (tone layers): a curved decay + release if it fits clearly better over the
+        // whole note, e.g. a kick's hold-then-drop (whose drop is often after the key-up
+        // point the print picks). Same attack; decay, sustain, release and curve searched.
+        if (dB && allowCurve)
+        {
+            float bestTotal = plainTotal;
+            Adsr pick1 = out;
+            for (float c : { -0.5f, -0.25f, 0.25f, 0.5f, 0.75f, 1.0f })
+            {
+                const float p = curveExponent (c);
+                float hb = std::numeric_limits<float>::max(), hd = out.d, hs = out.s, hOff = 0.0f;
+                for (float s : sustains)
+                    for (float d : times)
+                    {
+                        double sw = 0.0, se = 0.0, se2 = 0.0;
+                        for (size_t j = 0; j < holdIdx.size(); ++j)
+                        {
+                            const float e = target[j] - juce::jmax (-60.0f, toDb (levelAt (holdIdx[j], out.a, d, s, p)));
+                            sw += weight[j];
+                            se += weight[j] * e;
+                            se2 += weight[j] * e * e;
+                        }
+                        const double off = sw > 0.0 ? juce::jlimit (-6.0, 6.0, se / sw) : 0.0;
+                        const auto err = static_cast<float> (se2 - 2.0 * off * se + off * off * sw);
+                        if (err < hb) { hb = err; hd = d; hs = s; hOff = static_cast<float> (off); }
+                    }
+                const float g = std::pow (10.0f, hOff / 20.0f);
+                float r = 0.05f;
+                const float total = hb + fitRelease (levelAt (hold, out.a, hd, hs, p) * g, p, r);
+                if (total < bestTotal)
                 {
-                    e += (tv - mv) * (tv - mv);
+                    bestTotal = total;
+                    pick1 = out;
+                    pick1.d = hd; pick1.s = hs; pick1.r = r; pick1.gain = g; pick1.curve = c;
                 }
             }
-            if (e < best) { best = e; out.r = r; }
+            if (bestTotal < 0.85f * plainTotal)
+                out = pick1;
         }
         return out;
     }
@@ -204,8 +273,29 @@ namespace
     }
 }
 
+float noiseResponse (float f, float centre, float octaves, int slope, double rate)
+{
+    auto W = [rate] (float hz) { return static_cast<float> (std::tan (juce::MathConstants<double>::pi * juce::jlimit (1.0, 0.49 * rate, static_cast<double> (hz)) / rate)); };
+    const float span = std::exp2 (juce::jlimit (0.1f, 8.0f, octaves));
+    const float wf = W (f);
+    if (slope <= 0)
+    {
+        const float q = std::sqrt (span) / (span - 1.0f);
+        const float x = wf / W (centre);
+        const float b = x / q;
+        return b * b / ((1.0f - x * x) * (1.0f - x * x) + b * b);
+    }
+    const int n = 1 << (juce::jmin (slope, numSlopes - 1) - 1);
+    const float xc = stageCorner (n);
+    const float y = wf / W (centre * std::sqrt (span) / xc), z = wf / W (centre / std::sqrt (span) * xc);
+    const float lpP = 1.0f / (1.0f + y * y * y * y), hpP = z * z * z * z / (1.0f + z * z * z * z);
+    return std::pow (lpP * hpP, static_cast<float> (n));
+}
+
 const char* toneId (int layer, int field) { return store().tone[static_cast<size_t> (layer * numToneFields + field)]; }
 const char* noiseId (int layer, int field) { return store().noise[static_cast<size_t> (layer * numNoiseFields + field)]; }
+int toneIndex (int layer, int field) { return store().toneAt[static_cast<size_t> (layer * numToneFields + field)]; }
+int noiseIndex (int layer, int field) { return store().noiseAt[static_cast<size_t> (layer * numNoiseFields + field)]; }
 const std::vector<const char*>& ids() { return store().all; }
 
 std::vector<ParamSpec> specs()
@@ -215,15 +305,14 @@ std::vector<ParamSpec> specs()
     v.push_back ({ detail, numTone, true, 0.0f });
     v.push_back ({ pitchAmt, 0, false, 0.0f });
     v.push_back ({ pitchTime, 0, false, 0.0f });
-    for (int l = 0; l < numTone; ++l)
-        for (int f = 0; f < numToneFields; ++f)
-        {
-            const int steps = f == octave ? 7 : f == semi ? 25 : f == fltType ? 3 : 0;
-            v.push_back ({ toneId (l, f), steps, f == octave || f == semi, 0.0f });
-        }
-    for (int l = 0; l < numNoise; ++l)
-        for (int f = 0; f < numNoiseFields; ++f)
-            v.push_back ({ noiseId (l, f), 0, false, 0.0f });
+    const auto& st = store();
+    for (size_t i = 0; i < st.slots.size(); ++i)
+    {
+        const auto& s = st.slots[i];
+        const int f = s.field;
+        const int steps = s.noise ? (f == nSlope ? numSlopes : 0) : (f == octave ? 7 : f == semi ? 25 : f == fltType ? 3 : 0);
+        v.push_back ({ st.strings[i].c_str(), steps, ! s.noise && (f == octave || f == semi), 0.0f });
+    }
     return v;
 }
 
@@ -244,6 +333,8 @@ void addParams (juce::AudioProcessorValueTreeState::ParameterLayout& l)
         const juce::String pre = "Layer " + juce::String (n + 1) + " ";
         for (int f = 0; f < numToneFields; ++f)
         {
+            if (f == curve)
+                continue; // v10, added below
             const char* id = toneId (n, f);
             const auto name = pre + toneLabels[f];
             switch (f)
@@ -276,6 +367,13 @@ void addParams (juce::AudioProcessorValueTreeState::ParameterLayout& l)
         addF (noiseId (n, nRelease), pre + "Release", timeRange (false), 0.3f, secs());
         addF (noiseId (n, nPan), pre + "Pan", { -1.0f, 1.0f }, 0.0f, pct());
     }
+    // M14 part 2 (CashCode v10): envelope curve (decay + release) per tone layer, edge slope per noise layer.
+    for (int n = 0; n < numTone; ++n)
+        l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { toneId (n, curve), 2 }, "Layer " + juce::String (n + 1) + " Env Curve",
+                                                            juce::NormalisableRange<float> (-1.0f, 1.0f), 0.0f, pct()));
+    for (int n = 0; n < numNoise; ++n)
+        l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { noiseId (n, nSlope), 2 }, "Noise Layer " + juce::String (n + 1) + " Slope",
+                                                             juce::StringArray { "6 dB", "12 dB", "24 dB", "48 dB" }, 0));
 }
 
 //============================================================================== wavetables
@@ -337,14 +435,37 @@ const float* tablesFor (const MintModel* m)
 }
 
 //============================================================================== voice
-void Env::set (float attackS, float decayS, float sustainLevel, float releaseS, double sampleRate)
+void Env::set (float attackS, float decayS, float sustainLevel, float releaseS, double sampleRate, float curveP)
 {
-    if (attackS == a && decayS == d && releaseS == r && sustainLevel == sus)
+    if (attackS == a && decayS == d && releaseS == r && sustainLevel == sus && curveP == p)
         return;
-    a = attackS; d = decayS; r = releaseS; sus = sustainLevel;
+    if (curveP != p && (stage == dec || stage == rel))
+    {
+        // Pick the new curve up where the level is now (no jump).
+        const bool falling = stage == rel;
+        const float span = falling ? relStart : 1.0f - sustainLevel;
+        const float from = falling ? 0.0f : sustainLevel;
+        g = span > 1.0e-6f ? juce::jlimit (1.0e-12f, 1.0f, (value - from) / span) : 1.0e-12f;
+        lg = std::log2 (g);
+        tFall = juce::jmax (1.0e-6f, falling ? releaseS : decayS) * std::pow (-lg / 9.965784f, 1.0f / curveP);
+        seg = 0;
+    }
+    a = attackS; d = decayS; r = releaseS; sus = sustainLevel; p = curveP;
     aStep = static_cast<float> (1.0 / juce::jmax (1.0, attackS * sampleRate));
     dMul = static_cast<float> (std::exp (-6.9078 / juce::jmax (1.0, decayS * sampleRate)));
     rMul = static_cast<float> (std::exp (-6.9078 / juce::jmax (1.0, releaseS * sampleRate)));
+    segS = static_cast<float> (curveSeg / sampleRate);
+}
+
+void Env::nextSegment()
+{
+    // dB(t) = -60 (t / time)^p, log-linear across each segment: log2 level = -log2 (1000) (t / d)^p.
+    g = std::exp2 (lg); // no drift: each segment starts exactly on the curve
+    tFall += segS;
+    const float lgNext = juce::jmax (-40.0f, -9.965784f * std::pow (tFall / juce::jmax (1.0e-6f, stage == rel ? r : d), p));
+    gMul = std::exp2 ((lgNext - lg) / static_cast<float> (curveSeg));
+    lg = lgNext;
+    seg = curveSeg;
 }
 
 void Bank::Svf::setup (float hz, float q, double rate)
@@ -386,7 +507,7 @@ void Bank::start (const Settings& s, uint32_t seed)
     {
         auto& st = tones[static_cast<size_t> (i)];
         const auto& t = s.tone[static_cast<size_t> (i)];
-        st.amp.set (t.a, t.d, t.s, t.r, sr);
+        st.amp.set (t.a, t.d, t.s, t.r, sr, t.p);
         st.flt.set (t.fa, t.fd, t.fs, t.fr, sr);
         if (fresh)
         {
@@ -407,6 +528,8 @@ void Bank::start (const Settings& s, uint32_t seed)
         if (fresh)
         {
             st.svf.reset();
+            for (auto& f : st.hp) f.reset();
+            for (auto& f : st.lp) f.reset();
             st.gain = n.gain;
             st.countdown = 0;
         }
@@ -424,7 +547,12 @@ void Bank::release()
 void Bank::kill()
 {
     for (auto& t : tones) { t.amp.reset(); t.flt.reset(); t.gain = 0.0f; t.svf.reset(); t.svfR.reset(); }
-    for (auto& n : noises) { n.amp.reset(); n.gain = 0.0f; n.svf.reset(); }
+    for (auto& n : noises)
+    {
+        n.amp.reset(); n.gain = 0.0f; n.svf.reset();
+        for (auto& f : n.hp) f.reset();
+        for (auto& f : n.lp) f.reset();
+    }
 }
 
 bool Bank::isActive() const
@@ -452,7 +580,7 @@ void Bank::next (const Settings& s, const float* waves, float pitch, float lfo1,
         st.gain += (target - st.gain) * smooth;
         if (st.amp.stage == Env::idle || (target == 0.0f && st.gain < 1.0e-5f))
             continue;
-        st.amp.set (t.a, t.d, t.s, t.r, sr);
+        st.amp.set (t.a, t.d, t.s, t.r, sr, t.p);
         const float env = st.amp.next();
 
         float semis = t.semis;
@@ -519,20 +647,54 @@ void Bank::next (const Settings& s, const float* waves, float pitch, float lfo1,
             continue;
         st.amp.set (n.a, n.d, n.s, n.r, sr);
         const float env = st.amp.next();
+        const int stages = n.slope <= 0 ? 0 : 1 << (juce::jmin (n.slope, numSlopes - 1) - 1); // 0, 1, 2, 4 pairs
         if (--st.countdown <= 0)
         {
             const float w = juce::jlimit (0.1f, 8.0f, n.octaves);
             const float span = std::exp2 (w);
-            const float q = std::sqrt (span) / (span - 1.0f);
             const float c = juce::jlimit (20.0f, nyq, n.centreHz * keyTrack);
-            st.svf.setup (c, q, sr);
-            const float enbw = juce::jmin (static_cast<float> (sr * 0.5), juce::MathConstants<float>::halfPi * c / q);
+            float enbw;
+            if (stages == 0)
+            {
+                const float q = std::sqrt (span) / (span - 1.0f);
+                st.svf.setup (c, q, sr);
+                enbw = juce::MathConstants<float>::halfPi * c / q;
+            }
+            else
+            {
+                // Butterworth HP + LP pairs; each stage's corner moved out so the whole
+                // cascade is -3 dB at the band edges (the same edges as the band-pass).
+                const float x = stageCorner (stages);
+                const float lo = c / std::sqrt (span), hi = c * std::sqrt (span);
+                const float loC = juce::jlimit (10.0f, nyq, lo * x), hiC = juce::jlimit (20.0f, nyq, hi / x);
+                for (int k = 0; k < stages; ++k)
+                {
+                    st.hp[static_cast<size_t> (k)].setup (loC, 0.70710678f, sr);
+                    st.lp[static_cast<size_t> (k)].setup (hiC, 0.70710678f, sr);
+                }
+                // Noise bandwidth of the cascade: hiC * I_n - loC * J_n (Butterworth integrals).
+                const float I = stages == 1 ? 1.1107f : stages == 2 ? 0.8330f : 0.6682f;
+                const float J = stages == 1 ? 1.1107f : stages == 2 ? 1.3884f : 1.6921f;
+                enbw = juce::jmax (0.5f * (juce::jmin (hi, nyq) - lo), juce::jmin (hiC * I, nyq) - loC * J);
+            }
+            enbw = juce::jmin (static_cast<float> (sr * 0.5), enbw);
             st.norm = juce::jmin (60.0f, std::sqrt (3.0f * static_cast<float> (sr * 0.5) / enbw));
             st.countdown = 32;
         }
-        float band, high;
-        st.svf.lp (nextNoise(), band, high);
-        const float out = band * st.svf.k * st.norm * st.gain * env;
+        float shaped;
+        if (stages == 0)
+        {
+            float band, high;
+            st.svf.lp (nextNoise(), band, high);
+            shaped = band * st.svf.k;
+        }
+        else
+        {
+            shaped = nextNoise();
+            for (int k = 0; k < stages; ++k)
+                shaped = st.lp[static_cast<size_t> (k)].lpOnly (st.hp[static_cast<size_t> (k)].hpOnly (shaped));
+        }
+        const float out = shaped * st.norm * st.gain * env;
         mid += out;
         side -= out * n.pan;
     }
@@ -972,7 +1134,7 @@ Fit fit (const MintModel& m, int key, int wantLayers, const Wobbles& wob)
         for (auto v : envT) ePeak = juce::jmax (ePeak, v);
         std::vector<float> envN (envT);
         for (auto& v : envN) v /= ePeak;
-        const Adsr amp = fitAdsr (envN, hold, dt, true);
+        const Adsr amp = fitAdsr (envN, hold, dt, true, true);
         ePeak *= amp.gain;
         const float lvl = juce::jmin (1.0f, ePeak);
         for (int h = 1; h <= numHarmonics; ++h)
@@ -1007,6 +1169,7 @@ Fit fit (const MintModel& m, int key, int wantLayers, const Wobbles& wob)
         set (toneId (layer, decay), juce::jlimit (0.005f, 30.0f, amp.d));
         set (toneId (layer, sustain), juce::jlimit (0.0f, 1.0f, amp.s));
         set (toneId (layer, release), juce::jlimit (0.005f, 30.0f, amp.r));
+        set (toneId (layer, curve), amp.curve);
         set (toneId (layer, fltType), 0.0f);
         set (toneId (layer, reso), 0.0f);
         if (fltTop > fltBase)
@@ -1127,16 +1290,11 @@ Fit fit (const MintModel& m, int key, int wantLayers, const Wobbles& wob)
         }
     }
 
-    Settings probe;
-    probe.detail = 0;
-    std::vector<float> peaks;
-    for (int g = 0; g < numNoise; ++g)
+    // Per group: envelope, stereo, a first centre/width from the band statistics.
+    struct NoiseFit { float pk = 0.0f, pan = 0.0f, logC = 10.0f, width = 2.0f, power = 0.0f; int slope = 0; Adsr adsr; };
+    std::vector<NoiseFit> nf;
+    for (int g = 0; g < numNoise && g < static_cast<int> (groups.size()); ++g)
     {
-        if (g >= static_cast<int> (groups.size()))
-        {
-            set (noiseId (g, nLevel), 0.0f);
-            continue;
-        }
         const auto [from, to] = groups[static_cast<size_t> (g)];
         double w = 0.0, mean = 0.0, var = 0.0, eL = 0.0, eR = 0.0;
         std::vector<float> env (static_cast<size_t> (T), 0.0f);
@@ -1154,27 +1312,110 @@ Fit fit (const MintModel& m, int key, int wantLayers, const Wobbles& wob)
         mean /= w;
         for (int b = from; b < to; ++b) { const double d = std::log2 (m.bandHz[static_cast<size_t> (b)]) - mean; var += Eb[static_cast<size_t> (b)] * d * d; }
         var /= w;
-        float pk = 0.0f;
-        for (auto& v : env) { v = std::sqrt (v); pk = juce::jmax (pk, v); }
-        for (auto& v : env) v /= juce::jmax (1.0e-20f, pk);
-        const Adsr a = fitAdsr (env, hold, dt, true);
-        pk *= a.gain;
-        const float centreAtRoot = static_cast<float> (std::exp2 (mean));
-        const float centre = centreAtRoot / std::exp2 ((static_cast<float> (key) - 60.0f) / 12.0f);
-        const float width = juce::jlimit (0.3f, 8.0f, static_cast<float> (3.46 * std::sqrt (var)) + 0.3f);
+        NoiseFit f;
+        for (auto& v : env) { v = std::sqrt (v); f.pk = juce::jmax (f.pk, v); }
+        for (auto& v : env) v /= juce::jmax (1.0e-20f, f.pk);
+        f.adsr = fitAdsr (env, hold, dt, true);
+        f.pk *= f.adsr.gain;
+        f.logC = static_cast<float> (mean);
+        f.width = juce::jlimit (0.3f, 8.0f, static_cast<float> (3.46 * std::sqrt (var)) + 0.3f);
+        f.power = static_cast<float> (w);
         const double sl = std::sqrt (eL), sr = std::sqrt (eR);
-        const float pn = sl + sr > 0.0 ? juce::jlimit (-1.0f, 1.0f, static_cast<float> ((sr - sl) / (sr + sl))) : 0.0f;
+        f.pan = sl + sr > 0.0 ? juce::jlimit (-1.0f, 1.0f, static_cast<float> ((sr - sl) / (sr + sl))) : 0.0f;
+        nf.push_back (f);
+    }
+
+    // Spectral shape: centre, width and edge slope of each noise layer, fitted so the
+    // layers' summed spectrum matches the Mint's noise bands (in dB, 60 dB range).
+    if (! nf.empty())
+    {
+        std::vector<float> measDb (static_cast<size_t> (nb)), wt (static_cast<size_t> (nb));
+        float top = -300.0f;
+        for (int b = 0; b < nb; ++b)
+        {
+            measDb[static_cast<size_t> (b)] = 10.0f * std::log10 (juce::jmax (1.0e-30f, Eb[static_cast<size_t> (b)]));
+            top = juce::jmax (top, measDb[static_cast<size_t> (b)]);
+        }
+        for (int b = 0; b < nb; ++b)
+        {
+            auto& v = measDb[static_cast<size_t> (b)];
+            v = juce::jmax (top - 60.0f, v);
+            wt[static_cast<size_t> (b)] = (v - top + 60.0f) / 60.0f + 0.15f;
+        }
+        // Each layer's band energies (shape * its group's power), cached per layer.
+        std::vector<std::vector<float>> layerE (nf.size(), std::vector<float> (static_cast<size_t> (nb), 0.0f));
+        auto shape = [&] (const NoiseFit& f, std::vector<float>& e)
+        {
+            double sum = 0.0;
+            for (int b = 0; b < nb; ++b)
+            {
+                e[static_cast<size_t> (b)] = noiseResponse (m.bandHz[static_cast<size_t> (b)], std::exp2 (f.logC), f.width, f.slope, MintModel::sampleRate) * bw[static_cast<size_t> (b)];
+                sum += e[static_cast<size_t> (b)];
+            }
+            for (auto& v : e) v = sum > 0.0 ? static_cast<float> (v * f.power / sum) : 0.0f;
+        };
+        auto error = [&]
+        {
+            float err = 0.0f;
+            for (int b = 0; b < nb; ++b)
+            {
+                float e = 0.0f;
+                for (auto& le : layerE) e += le[static_cast<size_t> (b)];
+                const float d = measDb[static_cast<size_t> (b)] - juce::jmax (top - 60.0f, 10.0f * std::log10 (juce::jmax (1.0e-30f, e)));
+                err += wt[static_cast<size_t> (b)] * d * d;
+            }
+            return err;
+        };
+        for (size_t g = 0; g < nf.size(); ++g)
+            shape (nf[g], layerE[g]);
+        float bestErr = error();
+        static constexpr float widths[] = { 0.3f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f };
+        for (int round = 0; round < 3; ++round)
+            for (size_t g = 0; g < nf.size(); ++g)
+            {
+                const NoiseFit start = nf[g];
+                NoiseFit best = start;
+                for (int slope = 0; slope < numSlopes; ++slope)
+                    for (int c = -8; c <= 8; ++c)
+                        for (float w : widths)
+                        {
+                            NoiseFit f = start;
+                            f.slope = slope;
+                            f.logC = start.logC + static_cast<float> (c) / 8.0f;
+                            f.width = w;
+                            shape (f, layerE[g]);
+                            if (const float e = error(); e < bestErr * 0.999f) { bestErr = e; best = f; }
+                        }
+                nf[g] = best;
+                shape (best, layerE[g]);
+            }
+    }
+
+    Settings probe;
+    probe.detail = 0;
+    std::vector<float> peaks;
+    for (int g = 0; g < numNoise; ++g)
+    {
+        if (g >= static_cast<int> (nf.size()))
+        {
+            set (noiseId (g, nLevel), 0.0f);
+            continue;
+        }
+        const auto& f = nf[static_cast<size_t> (g)];
+        const float centre = std::exp2 (f.logC) / std::exp2 ((static_cast<float> (key) - 60.0f) / 12.0f);
+        const auto& a = f.adsr;
         set (noiseId (g, nCentre), juce::jlimit (20.0f, 20000.0f, centre));
-        set (noiseId (g, nWidth), width);
+        set (noiseId (g, nWidth), f.width);
         set (noiseId (g, nAttack), juce::jlimit (0.001f, 10.0f, a.a));
         set (noiseId (g, nDecay), juce::jlimit (0.005f, 30.0f, a.d));
         set (noiseId (g, nSustain), juce::jlimit (0.0f, 1.0f, a.s));
         set (noiseId (g, nRelease), juce::jlimit (0.005f, 30.0f, a.r));
-        set (noiseId (g, nPan), pn);
+        set (noiseId (g, nPan), f.pan);
+        set (noiseId (g, nSlope), static_cast<float> (f.slope));
         auto& n = probe.noise[static_cast<size_t> (g)];
-        n = { pk, juce::jlimit (20.0f, 20000.0f, centre), width, pn, juce::jlimit (0.001f, 10.0f, a.a), juce::jlimit (0.005f, 30.0f, a.d),
-              juce::jlimit (0.0f, 1.0f, a.s), juce::jlimit (0.005f, 30.0f, a.r) };
-        peaks.push_back (pk);
+        n = { f.pk, juce::jlimit (20.0f, 20000.0f, centre), f.width, f.pan, juce::jlimit (0.001f, 10.0f, a.a), juce::jlimit (0.005f, 30.0f, a.d),
+              juce::jlimit (0.0f, 1.0f, a.s), juce::jlimit (0.005f, 30.0f, a.r), f.slope };
+        peaks.push_back (f.pk);
     }
 
     // Noise levels: measured through the same code. The Mint's noise alone vs these

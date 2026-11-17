@@ -125,7 +125,8 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
         { mintStart,      0,  false, 0.1f },
         { mintLoop,       0,  false, 0.1f },
     } };
-    // M14 (CashCode v9): the LAYERS, generated (8 tone layers + 2 noise layers + 4 shared).
+    // M14 (CashCode v9): the LAYERS, generated (8 tone layers + 2 noise layers + 4 shared);
+    // v10 appends each tone layer's Decay Curve and each noise layer's Slope.
     static const std::array<ParamSpec, numParams> table = []
     {
         std::array<ParamSpec, numParams> t {};

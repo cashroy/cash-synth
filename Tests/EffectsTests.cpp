@@ -577,7 +577,7 @@ TEST_CASE ("Effects page on the back of the bill", "[m11][ui]")
     auto* ed = dynamic_cast<CashSynthAudioProcessorEditor*> (editor.get());
     REQUIRE (ed != nullptr);
     auto& panel = ed->getAdvancedPanel();
-    CHECK (panel.getNumControls() == r.p.getParameters().size() - cash::layers::numParams); // M14: LAYERS controls come in part 2
+    CHECK (panel.getNumControls() == r.p.getParameters().size());
     CHECK (panel.getPage() == cash::AdvancedPanel::synthPage);
 
     auto* time = panel.getKnob (delayTime);
