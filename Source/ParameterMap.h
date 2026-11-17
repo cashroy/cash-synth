@@ -19,9 +19,10 @@ struct ParamSpec
 class ParameterMap
 {
 public:
-    static constexpr int numParams = 50;
+    static constexpr int numParams = 60;
     static constexpr int numParamsV1 = 31; // CashCode v1 carried only the first 31
     static constexpr int numParamsV2 = 39; // v2 (M6) the first 39
+    static constexpr int numParamsV3 = 50; // v3 (M7) the first 50; v4 (M8) adds the section switches
 
     static const std::array<ParamSpec, numParams>& specs();
     static const ParamSpec& spec (int index) { return specs()[static_cast<size_t> (index)]; }
@@ -52,4 +53,8 @@ Patch patchFromTree (const juce::ValueTree&, const Patch& fallback);
 
 // Parameters that are performance settings, not part of the sound (weight 0).
 bool isPerformanceParam (int index);
+
+// M8 section on/off switches.
+bool isSectionSwitch (int index);
+void allSectionsOn (Patch&);
 }

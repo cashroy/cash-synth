@@ -68,6 +68,19 @@ namespace cash::param
     inline constexpr const char* modVibrato    = "modVibrato";    // mod wheel -> LFO 1 pitch depth
     inline constexpr const char* velToCutoff   = "velToCutoff";   // velocity -> cutoff amount
 
+    // M8: section on/off switches. Appended (CashCode v4); default on, so older
+    // codes, projects, stashes and vault notes sound the same.
+    inline constexpr const char* osc1On      = "osc1On";
+    inline constexpr const char* osc2On      = "osc2On";
+    inline constexpr const char* subNoiseOn  = "subNoiseOn";
+    inline constexpr const char* filterOn    = "filterOn";
+    inline constexpr const char* filterEnvOn = "filterEnvOn"; // filter env incl. pitch env
+    inline constexpr const char* driveOn     = "driveOn";
+    inline constexpr const char* lfo1On      = "lfo1On";
+    inline constexpr const char* lfo2On      = "lfo2On";
+    inline constexpr const char* unisonOn    = "unisonOn";
+    inline constexpr const char* glideOn     = "glideOn";
+
     enum Wave { sine = 0, triangle, saw, square };
     enum FilterMode { lowPass = 0, bandPass, highPass };
     enum DriveType { softClip = 0, hardClip, fold };
@@ -91,6 +104,8 @@ namespace cash::param
     juce::StringArray glideModeNames();
     juce::StringArray glideTypeNames();
     juce::StringArray priorityNames();
+
+    juce::StringArray sectionSwitchIds(); // the M8 on/off params, in ParameterMap order
 
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 }

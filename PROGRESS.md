@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-Milestone 7 (Lead mode) **done**. Next: milestone 8 (section on/off toggles + automation-ready).
+Milestone 8 (section switches + automation-ready) **done**. Next: milestone 9 (Cash Match v2).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -16,7 +16,7 @@ Milestone 7 (Lead mode) **done**. Next: milestone 8 (section on/off toggles + au
 5. [x] Stash presets + state saving
 6. [x] Cash Match (+ drive, LFO 2 routing, pitch env)
 7. [x] Lead mode: mono/legato, glide, priority, unison, controllers
-8. [ ] Section on/off toggles + automation-ready (smoothing, safe mode switches)
+8. [x] Section on/off toggles + automation-ready (smoothing, safe mode switches)
 9. [ ] Cash Match v2: match the whole sample, every part of it (user, 2026-11-17: matches aren't good enough)
 10. [ ] Polish, pluginval, README
 
@@ -109,6 +109,20 @@ Milestone 7 (Lead mode) **done**. Next: milestone 8 (section on/off toggles + au
 - Fixed: a slider whose value box never changes width in `resized()` kept the default LAF outline (box was built before the editor set `CashLookAndFeel`). Colours now set on each slider.
 - Tests (`Tests/LeadTests.cpp`, 9 cases): mono/legato voice counts incl. unison and poly steals, retrigger vs legato envelope, glide timing (constant time, constant rate, legato-only, poly), priority Last/Low/High fallback + sustain pedal, unison width (spread 0 = mono, level steady, pans), bend range / mod wheel / vel->cutoff, v2 code + M6 project/vault load with lead off, jackpot/invest leave mode alone, front switch <-> param.
 
+## Section switches + automation (M8)
+- 10 bool params appended (50 -> 60, `CashCode::version` 4, 69 chars; v1-v3 decode with switches ON): `osc1On osc2On subNoiseOn filterOn filterEnvOn` (incl. pitch env) `driveOn lfo1On lfo2On unisonOn glideOn`. Default on = M7 sound. `param::sectionSwitchIds()`, `isSectionSwitch`, `allSectionsOn`.
+- **Engine lanes**: `SynthEngine` fills one value per sample per chunk for every continuous knob, gate and crossfade (`Lane` enum in `SynthVoice.h`, linear `SmoothedValue`s: 15 ms knobs, 10 ms switches/choices; preallocated in `prepare`, snapped there so offline renders are unchanged). Cutoff stays per-voice multiplicative (20 ms), master gain as before.
+- Choices crossfade: osc waves, filter type (one SVF gives LP/BP/HP), drive type, LFO waves, LFO 2 target (a weight lane per target). Sustain levels are lanes too (ADSR gets them per sample while ramping; JUCE's ADSR jumps otherwise).
+- Bypass: off sections skip work for the whole chunk when fully off (filter, drive, LFO generation, oscillators). Filter state is cleared before it fades back. Filter env keeps running while off (cheap; keeps retrigger semantics). LFO 2 tremolo needs its own gate lane (`laneLfo2On`): its "1 - x" form isn't zero when the LFO is.
+- Unison off = 1 voice; glide off = 0 s. Unison place (-1..1) + level are smoothed per voice; detune/spread are applied live from lanes. A sounding (or stolen) voice glides to its new place.
+- **Voicing hand-over** (`changeVoicing`): poly<->mono/legato and unison count changes keep held keys sounding. Poly->mono moves the priority key's voices into the mono slots (no retrigger), others release. Mono->poly: sounding note keeps its voices (pedal-held stays pedal-held), other held keys start. Poly unison change `regroup`s every held key.
+- Money moves: weights 0.15 for subNoise/drive/lfo1/lfo2/unison/glide switches, 0 for osc1/osc2/filter/filterEnv. Jackpot: each effect switch off with 15 % (own Rng stream). `makePlayable`: osc 1 or 2 must be on (osc 1 first; sub only if both locked off); tonal level counts switched-on sources only. Cash Match forces all switches on and doesn't polish them (M9).
+- Host view: all params automatable; names now "LFO 1 ..." for LFO 1 (IDs unchanged); cutoff text parses "kHz"; octave has an "oct" label. Test round-trips every param's text.
+- UI: engraved ON/OFF slide switch in each section title (`AdvancedPanel::SectionSwitch`, `ParameterAttachment`); off = knobs/labels at 35 % alpha, still editable. VOICE split into VOICE (Mode, Priority) + UNISON (Voices, Detune, Spread); knob sizes unchanged. `getNumControls` counts switches.
+- Tests (`Tests/AutomationTests.cpp`, 9 cases): **golden renders** of 4 scenes from the M7 engine (`Tests/GoldenRenders.inc`, `GoldenScenes.h`) match within 1e-5; old code/project/vault/stash load all-on; each switch bypasses exactly its section; bypassed filter = dry; toggling mid-note and automating all 60 params (sweeps + hard jumps, 64-sample blocks) stay under 2x the steady max sample step, no NaNs; hand-over; jackpot rails; UI switches; host text.
+- Known: slamming cutoff 20 Hz <-> 20 kHz with resonance makes a resonant "zap" (~5x steady step; tested <= 8x). With reso 0 it's as clean as the rest. Per-sample coefficients didn't change it.
+- Tests that set a param after `prepare` now hear a 15 ms ramp: reset before rendering if a test needs the new value instantly.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
@@ -117,10 +131,10 @@ Milestone 7 (Lead mode) **done**. Next: milestone 8 (section on/off toggles + au
 M5 verified 2026-11-17: clean build (-Werror), 41 Catch2 tests pass (adds patch tree, Stash files, project state round trip + fresh opening balance, bad/bare state, processor stash, stash bar, bill scan), `auval` PASS, snapshot checked by eye.
 M6 verified 2026-11-17: clean build (-Werror), 51 tests pass (~13 s), no JUCE assertions printed, `auval` PASS, snapshots checked by eye.
 M7 verified 2026-11-17: clean build (-Werror), 60 tests pass, no JUCE assertions, `auval` PASS, front/back snapshots checked by eye.
+M8 verified 2026-11-17: clean build (-Werror), 70 tests pass (~26 s), no JUCE assertions, `auval` PASS, front/back snapshots checked by eye (back shows Drive + LFO 2 off).
 - Fixed: the `juce_Slider.cpp:1485` assertion was `RiskDial` passing a negative start angle to `setRotaryParameters` (JUCE wants both angles in [0, 4pi)); now 1.5pi..2.5pi, same dial.
 
 ## Next
-- Try in Logic: Cash Match with a real one-shot; old M6 projects/stashes load with lead off; play a lead in Mono/Legato with glide, mod wheel and bend; unison 4-8 with spread on headphones; sustain pedal in both modes.
-- Milestone 8: on/off switch per section (Osc 1, Osc 2, Sub/Noise, Filter, Filter env, Drive, LFO 1, LFO 2, Unison, Glide), CashCode v4 (old = all on). Automation: all 50 params are host-automatable already, but only cutoff + master gain are smoothed (others step per block = zipper); voiceMode change releases all notes; unison count only affects new notes in poly. Not automatable by design: Risk, Invest/Jackpot, Stash, Vault, Cash Match.
-- Milestone 9: Cash Match v2: whole sample (not 2.5 s), ~10 ms frames, f0 over time (pitch env/vibrato), modulation detection (LFO/tremolo), brightness curve -> filter env, stereo width -> unison, per-part scores on the cheque, staged fit + multithreaded search, uses the section toggles.
+- Try in Logic: automate cutoff/levels/waves/switches and listen for zipper; flip voice mode and unison while holding a chord; old M7 projects and stashes should sound the same.
+- Milestone 9: Cash Match v2: whole sample (not 2.5 s), ~10 ms frames, f0 over time (pitch env/vibrato), modulation detection (LFO/tremolo), brightness curve -> filter env, stereo width -> unison, per-part scores on the cheque, staged fit + multithreaded search. Use the section switches (stop forcing them on in `CashMatcher::search`).
 - Milestone 10: polish (flip animation, lock toggles per knob, maybe multithreaded matching), pluginval, README.

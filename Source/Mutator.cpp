@@ -151,6 +151,21 @@ Patch Mutator::jackpot (const Patch& base, uint64_t seed, const LockMask& locks)
             out[u] = ParameterMap::fromStep (ParameterMap::spec (static_cast<int> (u)), stack ? voices : 0);
     }
 
+    // M8 section switches: effect sections are mostly on after a re-roll (the old
+    // jackpot sound), sometimes off. Osc 1/2, filter and filter env are never touched
+    // (weight 0). Own stream, same draws whatever is locked.
+    {
+        Rng sw (seed ^ 0x53574954ull);
+        for (int i = 0; i < ParameterMap::numParams; ++i)
+        {
+            if (! isSectionSwitch (i))
+                continue;
+            const bool on = ! sw.chance (0.15f);
+            if (isFree (locks, i))
+                out[static_cast<size_t> (i)] = on ? 1.0f : 0.0f;
+        }
+    }
+
     makePlayable (out, locks);
     return out;
 }
@@ -165,13 +180,23 @@ void Mutator::makePlayable (Patch& p, const LockMask& locks)
     for (int i = 0; i < ParameterMap::numParams; ++i)
         p[static_cast<size_t> (i)] = ParameterMap::snap (ParameterMap::spec (i), p[static_cast<size_t> (i)]);
 
-    // Something tonal must be audible.
-    const float tonal = juce::jmax (p[at (osc1Level)], p[at (osc2Level)], p[at (subLevel)]);
+    // M8: never every oscillator switched off. Osc 1 or 2 must be on (the sub
+    // only as a last resort, when both of their switches are locked off).
+    auto isOn = [&p] (const char* id) { return p[at (id)] > 0.5f; };
+    auto turnOn = [&] (const char* id) { if (freeId (id)) p[at (id)] = 1.0f; return isOn (id); };
+    if (! isOn (osc1On) && ! isOn (osc2On))
+        if (! turnOn (osc1On) && ! turnOn (osc2On))
+            turnOn (subNoiseOn);
+
+    // Something tonal must be audible (only switched-on sources count).
+    const bool on1 = isOn (osc1On), on2 = isOn (osc2On), onSub = isOn (subNoiseOn);
+    const float tonal = juce::jmax (on1 ? p[at (osc1Level)] : 0.0f, on2 ? p[at (osc2Level)] : 0.0f, onSub ? p[at (subLevel)] : 0.0f);
     if (tonal < 0.35f)
     {
-        if (freeId (osc1Level))      raiseTo (osc1Level, 0.6f);
-        else if (freeId (osc2Level)) raiseTo (osc2Level, 0.6f);
-        else                         raiseTo (subLevel, 0.6f);
+        if (on1 && freeId (osc1Level))        raiseTo (osc1Level, 0.6f);
+        else if (on2 && freeId (osc2Level))   raiseTo (osc2Level, 0.6f);
+        else if (onSub && freeId (subLevel))  raiseTo (subLevel, 0.6f);
+        else if (freeId (osc1Level) && turnOn (osc1On)) raiseTo (osc1Level, 0.6f);
     }
     capAt (noiseLevel, juce::jmax (0.5f, p[at (osc1Level)]));
 

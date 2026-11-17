@@ -235,6 +235,9 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
     const juce::File front (path);
     write (front);
     rig.editor->flip();
+    // M8: show both switch states on the back (on, and dimmed off).
+    for (auto* id : { cash::param::lfo2On, cash::param::driveOn })
+        rig.p.getState().getParameter (id)->setValueNotifyingHost (0.0f);
     write (front.getSiblingFile (front.getFileNameWithoutExtension() + "-back.png"));
     stashDir.deleteRecursively();
 }

@@ -66,12 +66,23 @@ SynthEngine::SynthEngine (const RawLookup& lookup)
     bind (bendRange, param::bendRange);
     bind (modVibrato, param::modVibrato);
     bind (velToCutoff, param::velToCutoff);
+    bind (osc1On, param::osc1On);
+    bind (osc2On, param::osc2On);
+    bind (subNoiseOn, param::subNoiseOn);
+    bind (filterOn, param::filterOn);
+    bind (filterEnvOn, param::filterEnvOn);
+    bind (driveOn, param::driveOn);
+    bind (lfo1On, param::lfo1On);
+    bind (lfo2On, param::lfo2On);
+    bind (unisonOn, param::unisonOn);
+    bind (glideOn, param::glideOn);
 
     for (int i = 0; i < numVoices; ++i)
         voices.push_back (std::make_unique<CashVoice> (ctx));
     held.reserve (128);
 
     readParameters();
+    snapSmoothers();
 }
 
 void SynthEngine::prepare (double newSampleRate, int maxBlockSize)
@@ -81,8 +92,12 @@ void SynthEngine::prepare (double newSampleRate, int maxBlockSize)
         v->setSampleRate (newSampleRate);
     lfoBuffer.assign (static_cast<size_t> (juce::jmax (maxBlockSize, 32)), 0.0f);
     lfo2Buffer.assign (lfoBuffer.size(), 0.0f);
+    laneData.assign (lfoBuffer.size() * static_cast<size_t> (numLanes), 0.0f);
+    for (int k = 0; k < numLanes; ++k)
+        ctx.lane[k] = laneData.data() + static_cast<size_t> (k) * lfoBuffer.size();
     gain.reset (newSampleRate, 0.02);
     readParameters();
+    snapSmoothers();
     gain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterGain.get()));
     reset();
 }
@@ -106,78 +121,173 @@ int SynthEngine::getNumActiveVoices() const
     return static_cast<int> (std::count_if (voices.begin(), voices.end(), [] (const auto& v) { return v->isActive(); }));
 }
 
+void SynthEngine::snapSmoothers()
+{
+    // Jump straight to the current values (prepare / construction): no ramp from stale ones.
+    for (int k = 0; k < numLanes; ++k)
+    {
+        const bool isSwitch = k >= laneOsc1On; // gates, crossfades and LFO 2 routing
+        smooth[static_cast<size_t> (k)].reset (sampleRate, isSwitch ? 0.01 : 0.015);
+    }
+    auto& p = ctx.params;
+    p.prevOsc1Wave = p.osc1Wave;
+    p.prevOsc2Wave = p.osc2Wave;
+    p.prevFilterType = p.filterType;
+    p.prevDriveType = p.driveType;
+    for (auto* l : { &lfo1, &lfo2 })
+    {
+        l->prevWave = l->wave;
+        l->rate.reset (sampleRate, 0.015);
+        l->gate.reset (sampleRate, 0.01);
+        l->fade.reset (sampleRate, 0.01);
+        l->fade.setCurrentAndTargetValue (1.0f);
+    }
+    for (int k = laneOsc1Wave; k <= laneDriveType; ++k)
+        smooth[static_cast<size_t> (k)].setCurrentAndTargetValue (1.0f);
+}
+
+void SynthEngine::setChoice (int newValue, int& now, int& prev, Lane fade)
+{
+    if (newValue == now)
+        return;
+    // Crossfade from what was sounding. A change mid-fade restarts from the old choice.
+    prev = now;
+    now = newValue;
+    auto& f = smooth[static_cast<size_t> (fade)];
+    f.setCurrentAndTargetValue (0.0f);
+    f.setTargetValue (1.0f);
+}
+
 void SynthEngine::readParameters()
 {
     auto& p = ctx.params;
-    auto semis = [] (const Raw& oct, const Raw& semi, const Raw& fine)
-    { return static_cast<float> (oct.asInt() * 12 + semi.asInt()) + fine.get() / 100.0f; };
+    auto set = [this] (Lane k, float v) { smooth[static_cast<size_t> (k)].setTargetValue (v); };
+    auto gate = [] (const Raw& r) { return r.get() > 0.5f ? 1.0f : 0.0f; };
 
-    p.osc1Wave = osc1Wave.asInt();
-    p.osc2Wave = osc2Wave.asInt();
-    p.osc1Semis = semis (osc1Octave, osc1Semi, osc1Fine);
-    p.osc2Semis = semis (osc2Octave, osc2Semi, osc2Fine);
-    p.osc1Level = osc1Level.get();
-    p.osc2Level = osc2Level.get();
-    p.subLevel = subLevel.get();
-    p.noiseLevel = noiseLevel.get();
+    setChoice (osc1Wave.asInt(), p.osc1Wave, p.prevOsc1Wave, laneOsc1Wave);
+    setChoice (osc2Wave.asInt(), p.osc2Wave, p.prevOsc2Wave, laneOsc2Wave);
+    p.osc1Steps = static_cast<float> (osc1Octave.asInt() * 12 + osc1Semi.asInt());
+    p.osc2Steps = static_cast<float> (osc2Octave.asInt() * 12 + osc2Semi.asInt());
+    set (laneOsc1Fine, osc1Fine.get() / 100.0f);
+    set (laneOsc2Fine, osc2Fine.get() / 100.0f);
+    set (laneOsc1Level, osc1Level.get());
+    set (laneOsc2Level, osc2Level.get());
+    set (laneSubLevel, subLevel.get());
+    set (laneNoiseLevel, noiseLevel.get());
 
-    p.filterType = filterType.asInt();
-    p.cutoffHz = filterCutoff.get();
-    p.resonance = filterReso.get();
-    p.filterEnvAmt = filterEnvAmt.get();
-    p.keyTrack = filterKeyTrack.get();
+    setChoice (filterType.asInt(), p.filterType, p.prevFilterType, laneFilterType);
+    p.cutoffHz = filterCutoff.get(); // smoothed per voice (multiplicative)
+    set (laneReso, filterReso.get());
+    set (laneEnvAmt, filterEnvAmt.get());
+    set (laneKeyTrack, filterKeyTrack.get());
 
     p.filterEnv = { fltA.get(), fltD.get(), fltS.get(), fltR.get() };
     p.ampEnv = { ampA.get(), ampD.get(), ampS.get(), ampR.get() };
+    set (laneFltSustain, fltS.get());
+    set (laneAmpSustain, ampS.get());
 
-    p.lfoToPitch = lfoToPitch.get();
-    p.lfoToCutoff = lfoToCutoff.get();
+    set (laneLfoPitch, lfoToPitch.get());
+    set (laneLfoCutoff, lfoToCutoff.get());
     p.velocitySens = velocitySens.get();
 
-    p.driveType = driveType.asInt();
-    p.drive = driveAmount.get();
-    p.lfoToDrive = lfoToDrive.get();
-    p.lfo2Target = lfo2Target.asInt();
-    p.lfo2Amount = lfo2Amount.get();
-    p.pitchEnvSemis = pitchEnvAmt.get() * param::pitchEnvRange;
+    setChoice (driveType.asInt(), p.driveType, p.prevDriveType, laneDriveType);
+    set (laneDrive, driveAmount.get());
+    set (laneLfoDrive, lfoToDrive.get());
+    set (laneLfo2Amount, lfo2Amount.get());
+    const int target2 = lfo2Target.asInt();
+    for (int t = 0; t < 5; ++t)
+        set (static_cast<Lane> (laneToCutoff + t), t == target2 ? 1.0f : 0.0f);
+    set (lanePitchEnv, pitchEnvAmt.get() * param::pitchEnvRange);
 
     p.bendRange = bendRange.get();
-    p.modVibratoSemis = modVibrato.get() * param::modVibratoRange;
-    p.velCutoffSemis = velToCutoff.get() * param::velCutoffRange;
+    set (laneModVib, modVibrato.get() * param::modVibratoRange);
+    set (laneVelCutoff, velToCutoff.get() * param::velCutoffRange);
+    set (laneDetune, unisonDetune.get());
+    set (laneSpread, unisonSpread.get());
 
-    const int newMode = voiceMode.asInt();
-    const int newUnison = juce::jlimit (1, param::maxUnison, unisonVoices.asInt());
-    // Changing how notes are dealt mid-phrase: let what's playing ring out and start clean.
-    if (newMode != mode || (newMode != param::poly && newUnison != unison))
-        releaseAll();
-    mode = newMode;
-    unison = newUnison;
+    set (laneOsc1On, gate (osc1On));
+    set (laneOsc2On, gate (osc2On));
+    set (laneSubNoiseOn, gate (subNoiseOn));
+    set (laneFilterOn, gate (filterOn));
+    set (laneFilterEnvOn, gate (filterEnvOn));
+    set (laneDriveOn, gate (driveOn));
+    set (laneLfo2On, gate (lfo2On));
+
     priority = notePriority.asInt();
-    glideSeconds = glideTime.get();
+    glideSeconds = glideOn.get() > 0.5f ? glideTime.get() : 0.0f;
     glideModeNow = glideMode.asInt();
     glideByRate = glideType.asInt() == param::constantRate;
-    detuneAmount = unisonDetune.get();
-    spreadAmount = unisonSpread.get();
 
-    lfo1.wave = lfoWave.asInt();
-    lfo1.inc = static_cast<float> (lfoRate.get() / sampleRate);
-    lfo2.wave = lfo2Wave.asInt();
-    lfo2.inc = static_cast<float> (lfo2Rate.get() / sampleRate);
+    // Mode or unison changes keep the held notes sounding (handed over, not released).
+    const int newUnison = unisonOn.get() > 0.5f ? juce::jlimit (1, param::maxUnison, unisonVoices.asInt()) : 1;
+    changeVoicing (voiceMode.asInt(), newUnison);
+
+    for (auto [lfo, waveParam, rateParam, onParam] : { std::tuple { &lfo1, &lfoWave, &lfoRate, &lfo1On },
+                                                       std::tuple { &lfo2, &lfo2Wave, &lfo2Rate, &lfo2On } })
+    {
+        if (const int w = waveParam->asInt(); w != lfo->wave)
+        {
+            lfo->prevWave = lfo->wave;
+            lfo->wave = w;
+            lfo->fade.setCurrentAndTargetValue (0.0f);
+            lfo->fade.setTargetValue (1.0f);
+        }
+        lfo->rate.setTargetValue (rateParam->get());
+        lfo->gate.setTargetValue (gate (*onParam));
+    }
 }
 
-float SynthEngine::Lfo::next()
+float SynthEngine::Lfo::shape (int wave, double t)
 {
-    const double t = phase;
-    phase += inc;
-    if (phase >= 1.0)
-        phase -= 1.0;
-
     switch (wave)
     {
         case param::sine:     return static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * t));
         case param::triangle: return static_cast<float> (1.0 - 4.0 * std::abs (t - 0.5));
         case param::saw:      return static_cast<float> (2.0 * t - 1.0);
         default:              return t < 0.5 ? 1.0f : -1.0f;
+    }
+}
+
+void SynthEngine::fillLfo (Lfo& l, std::vector<float>& out, int n)
+{
+    if (! l.gate.isSmoothing() && l.gate.getTargetValue() <= 0.0f)
+    {
+        // Switched off: no LFO work at all (its phase waits where it stopped).
+        juce::FloatVectorOperations::clear (out.data(), n);
+        l.rate.skip (n);
+        l.fade.skip (n);
+        return;
+    }
+
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = l.phase;
+        l.phase += static_cast<float> (l.rate.getNextValue() / sampleRate);
+        if (l.phase >= 1.0)
+            l.phase -= 1.0;
+
+        float v = Lfo::shape (l.wave, t);
+        if (l.fade.isSmoothing())
+        {
+            const float x = l.fade.getNextValue();
+            v = v * x + Lfo::shape (l.prevWave, t) * (1.0f - x);
+        }
+        out[static_cast<size_t> (i)] = v * l.gate.getNextValue();
+    }
+}
+
+void SynthEngine::fillLanes (int n)
+{
+    for (int k = 0; k < numLanes; ++k)
+    {
+        auto& sm = smooth[static_cast<size_t> (k)];
+        auto* d = laneData.data() + static_cast<size_t> (k) * lfoBuffer.size();
+        ctx.moving[k] = sm.isSmoothing();
+        if (ctx.moving[k])
+            for (int i = 0; i < n; ++i)
+                d[i] = sm.getNextValue();
+        else
+            juce::FloatVectorOperations::fill (d, sm.getTargetValue(), n);
     }
 }
 
@@ -195,11 +305,9 @@ void SynthEngine::render (juce::AudioBuffer<float>& buffer, const juce::MidiBuff
     for (int start = 0; start < total; start += chunk)
     {
         const int n = juce::jmin (chunk, total - start);
-        for (int i = 0; i < n; ++i)
-        {
-            lfoBuffer[static_cast<size_t> (i)] = lfo1.next();
-            lfo2Buffer[static_cast<size_t> (i)] = lfo2.next();
-        }
+        fillLanes (n);
+        fillLfo (lfo1, lfoBuffer, n);
+        fillLfo (lfo2, lfo2Buffer, n);
         ctx.lfo = lfoBuffer.data();
         ctx.lfo2 = lfo2Buffer.data();
         ctx.lfoBase = start;
@@ -270,8 +378,7 @@ void SynthEngine::placeUnison (CashVoice& v, int index, int count) const
 {
     // Spread evenly from -1 to +1: detune low-to-high, panned left-to-right.
     const float t = count > 1 ? static_cast<float> (index) / static_cast<float> (count - 1) * 2.0f - 1.0f : 0.0f;
-    v.setUnison (t * 0.5f * detuneAmount * param::unisonDetuneRange, t * spreadAmount,
-                 1.0f / std::sqrt (static_cast<float> (count)));
+    v.setUnison (t, 1.0f / std::sqrt (static_cast<float> (count)));
 }
 
 void SynthEngine::noteOn (int note, float velocity)
@@ -295,7 +402,12 @@ void SynthEngine::noteOn (int note, float velocity)
             v->release();
 
     const bool glides = lastPitch >= 0.0f && (glideModeNow == param::glideAlways || othersHeld);
-    const float from = glides ? lastPitch : -1.0f;
+    startPolyNote (note, velocity, glides ? lastPitch : -1.0f);
+    lastPitch = static_cast<float> (note);
+}
+
+void SynthEngine::startPolyNote (int note, float velocity, float fromPitch)
+{
     const int count = unisonCount();
     const uint64_t stamp = clock + 1;
 
@@ -305,12 +417,11 @@ void SynthEngine::noteOn (int note, float velocity)
         if (v == nullptr)
             break;
         placeUnison (*v, k, count);
-        v->play (note, velocity, true, from, glide());
+        v->play (note, velocity, true, fromPitch, glide());
         v->keyDown = true;
         v->sustained = false;
         v->age = ++clock;
     }
-    lastPitch = static_cast<float> (note);
 }
 
 void SynthEngine::noteOff (int note)
@@ -394,6 +505,153 @@ CashVoice* SynthEngine::allocate (uint64_t notBefore)
                 best = v.get();
         }
     return best;
+}
+
+//============================================================================== Voicing changes
+// Voice mode or unison count changed (automation, a click): hand the held keys
+// over to the new voicing instead of releasing everything.
+void SynthEngine::changeVoicing (int newMode, int newUnison)
+{
+    const int oldMode = mode, oldCount = juce::jlimit (1, numVoices, unison);
+    if (newMode == oldMode && newUnison == unison)
+        return;
+    mode = newMode;
+    unison = newUnison;
+    const int count = unisonCount();
+    const bool wasPoly = oldMode == param::poly, isPoly = newMode == param::poly;
+
+    if (wasPoly && isPoly)
+    {
+        for (const auto& h : held)
+            regroup (h.note, count);
+        return;
+    }
+
+    if (! wasPoly && ! isPoly)
+    {
+        // Mono <-> Legato needs nothing; a new unison count reshapes the stack in place.
+        if (! monoGate || count == oldCount)
+            return;
+        for (int k = count; k < oldCount; ++k)
+            if (voices[static_cast<size_t> (k)]->isActive())
+                voices[static_cast<size_t> (k)]->release();
+        const float vel = voices[0]->getVelocity();
+        for (int k = 0; k < count; ++k)
+        {
+            auto& v = *voices[static_cast<size_t> (k)];
+            placeUnison (v, k, count);
+            if (k >= oldCount || ! v.isActive())
+                v.play (monoNote, vel, true, -1.0f, {});
+            v.keyDown = true;
+            v.sustained = false;
+            v.age = ++clock;
+        }
+        return;
+    }
+
+    if (wasPoly)
+    {
+        // Poly -> Mono/Legato: the priority key keeps its voices (moved to the
+        // mono slots, no retrigger); every other note rings out.
+        const auto* chosen = priorityNote();
+        int kept = 0;
+        if (chosen != nullptr)
+            for (size_t j = 0; j < voices.size() && kept < count; ++j)
+                if (voices[j]->isActive() && voices[j]->keyDown && voices[j]->getNote() == chosen->note)
+                    std::swap (voices[static_cast<size_t> (kept++)], voices[j]);
+
+        for (size_t j = static_cast<size_t> (kept); j < voices.size(); ++j)
+            if (voices[j]->isActive() && (voices[j]->keyDown || voices[j]->sustained))
+                voices[j]->release();
+
+        monoGate = false;
+        monoNote = -1;
+        if (chosen == nullptr)
+            return;
+
+        for (int k = 0; k < count; ++k)
+        {
+            auto& v = *voices[static_cast<size_t> (k)];
+            placeUnison (v, k, count);
+            if (k >= kept)
+                v.play (chosen->note, chosen->velocity, true, -1.0f, {});
+            v.keyDown = true;
+            v.sustained = false;
+            v.age = ++clock;
+        }
+        monoNote = chosen->note;
+        monoGate = true;
+        lastPitch = static_cast<float> (chosen->note);
+        return;
+    }
+
+    // Mono/Legato -> Poly: the sounding note becomes a poly note (pedal-held
+    // stays pedal-held), and every other held key starts sounding too.
+    const int sounding = monoGate ? monoNote : -1;
+    if (sounding >= 0)
+    {
+        const bool keyHeld = std::any_of (held.begin(), held.end(), [sounding] (const Held& h) { return h.note == sounding; });
+        for (int k = 0; k < oldCount; ++k)
+        {
+            auto& v = *voices[static_cast<size_t> (k)];
+            if (! v.isActive() || keyHeld)
+                continue;
+            v.keyDown = false;
+            if (sustainDown)
+                v.sustained = true;
+            else
+                v.release();
+        }
+        if (keyHeld)
+            regroup (sounding, count);
+    }
+    monoGate = false;
+    monoNote = -1;
+
+    for (const auto& h : held)
+        if (h.note != sounding)
+            startPolyNote (h.note, h.velocity, -1.0f);
+}
+
+void SynthEngine::regroup (int note, int count)
+{
+    // The voices holding this key, oldest first (= unison order they were dealt in).
+    std::array<CashVoice*, numVoices> group {};
+    int n = 0;
+    for (auto& v : voices)
+        if (v->isActive() && v->keyDown && v->getNote() == note)
+            group[static_cast<size_t> (n++)] = v.get();
+    std::sort (group.begin(), group.begin() + n, [] (const CashVoice* a, const CashVoice* b) { return a->age < b->age; });
+
+    for (int k = count; k < n; ++k)
+        group[static_cast<size_t> (k)]->release();
+    n = juce::jmin (n, count);
+    if (n == 0)
+        return; // its voices were stolen: leave it
+
+    // Fresh stamps so allocate() never steals this note's own voices.
+    for (int k = 0; k < n; ++k)
+        group[static_cast<size_t> (k)]->age = ++clock;
+    const uint64_t stamp = group[0]->age;
+    const float vel = group[0]->getVelocity();
+
+    for (int k = 0; k < n; ++k)
+        placeUnison (*group[static_cast<size_t> (k)], k, count);
+    while (n < count)
+    {
+        auto* v = allocate (stamp);
+        if (v == nullptr)
+            break;
+        placeUnison (*v, n, count);
+        v->play (note, vel, true, -1.0f, {});
+        v->keyDown = true;
+        v->sustained = false;
+        v->age = ++clock;
+        group[static_cast<size_t> (n++)] = v;
+    }
+    if (n < count) // ran out of voices: spread the ones it got
+        for (int k = 0; k < n; ++k)
+            placeUnison (*group[static_cast<size_t> (k)], k, n);
 }
 
 //============================================================================== Mono / Legato

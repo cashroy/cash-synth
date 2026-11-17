@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
 #include "SynthVoice.h"
 
 namespace cash
@@ -34,6 +35,15 @@ private:
     void handleMidi (const juce::MidiMessage&);
     void renderVoices (juce::AudioBuffer<float>&, int start, int num);
 
+    void snapSmoothers();
+    void fillLanes (int numSamples);
+    void setChoice (int newValue, int& now, int& prev, Lane fade);
+
+    // Held notes carry over when the voice mode or unison count changes.
+    void changeVoicing (int newMode, int newUnison);
+    void regroup (int note, int count);           // poly: give a held note `count` voices
+    void startPolyNote (int note, float velocity, float fromPitch);
+
     void noteOn (int note, float velocity);
     void noteOff (int note);
     void setSustain (bool down);
@@ -55,10 +65,11 @@ private:
     struct Lfo
     {
         double phase = 0.0;
-        float inc = 0.0f;
-        int wave = 0;
-        float next();
+        int wave = 0, prevWave = 0;
+        juce::SmoothedValue<float> rate { 1.0f }, gate { 1.0f }, fade { 1.0f };
+        static float shape (int wave, double t);
     };
+    void fillLfo (Lfo&, std::vector<float>& out, int numSamples);
 
     struct Raw
     {
@@ -77,12 +88,16 @@ private:
     Raw driveType, driveAmount, lfoToDrive, lfo2Wave, lfo2Rate, lfo2Amount, lfo2Target, pitchEnvAmt;
     Raw voiceMode, glideTime, glideMode, glideType, notePriority, unisonVoices, unisonDetune, unisonSpread;
     Raw bendRange, modVibrato, velToCutoff;
+    Raw osc1On, osc2On, subNoiseOn, filterOn, filterEnvOn, driveOn, lfo1On, lfo2On, unisonOn, glideOn;
+
+    std::array<juce::SmoothedValue<float>, numLanes> smooth;
+    std::vector<float> laneData; // numLanes x chunk
 
     std::vector<std::unique_ptr<CashVoice>> voices;
     VoiceContext ctx;
 
     int mode = 0, priority = 0, unison = 1, glideModeNow = 0;
-    float glideSeconds = 0.0f, detuneAmount = 0.0f, spreadAmount = 0.0f;
+    float glideSeconds = 0.0f;
     bool glideByRate = false;
 
     std::vector<Held> held;      // keys down, in press order (reserved: no allocation on the audio thread)

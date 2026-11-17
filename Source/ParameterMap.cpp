@@ -71,6 +71,19 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
         { bendRange,    24, true,  0.0f },
         { modVibrato,   0,  false, 0.0f },
         { velToCutoff,  0,  false, 0.3f },
+
+        // M8 (CashCode v4): section switches. Money moves only flip the effect-like
+        // sections, lightly; Osc 1, Osc 2, the filter and its envelope stay put (weight 0).
+        { osc1On,      2, false, 0.0f },
+        { osc2On,      2, false, 0.0f },
+        { subNoiseOn,  2, false, 0.15f },
+        { filterOn,    2, false, 0.0f },
+        { filterEnvOn, 2, false, 0.0f },
+        { driveOn,     2, false, 0.15f },
+        { lfo1On,      2, false, 0.15f },
+        { lfo2On,      2, false, 0.15f },
+        { unisonOn,    2, false, 0.15f },
+        { glideOn,     2, false, 0.15f },
     } };
     return table;
 }
@@ -78,6 +91,17 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
 bool isPerformanceParam (int index)
 {
     return ParameterMap::spec (index).weight <= 0.0f;
+}
+
+bool isSectionSwitch (int index)
+{
+    return index >= ParameterMap::numParamsV3;
+}
+
+void allSectionsOn (Patch& p)
+{
+    for (int i = ParameterMap::numParamsV3; i < ParameterMap::numParams; ++i)
+        p[static_cast<size_t> (i)] = 1.0f;
 }
 
 int ParameterMap::indexOf (juce::StringRef id)

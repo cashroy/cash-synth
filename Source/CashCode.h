@@ -12,7 +12,7 @@
 // and I/L as 1, so codes survive being typed by hand.
 namespace cash::CashCode
 {
-inline constexpr int version = 3; // v2 (M6) appended 8 params, v3 (M7) 11 more; v1/v2 codes still decode
+inline constexpr int version = 4; // v2 (M6) +8 params, v3 (M7) +11, v4 (M8) +10 section switches; older codes still decode
 inline constexpr int continuousBits = 8;
 inline constexpr char prefix = '$';
 

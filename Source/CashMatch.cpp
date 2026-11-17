@@ -336,10 +336,11 @@ void CashMatcher::search()
     };
 
     juce::AudioBuffer<float> render;
-    auto consider = [&] (const Patch& p) -> bool
+    auto consider = [&] (Patch p) -> bool
     {
         if (cancelled())
             return false;
+        allSectionsOn (p); // M8: matching ignores the section switches for now (M9 will use them)
         const float d = evaluate (p, &render);
         const bool best = beam.empty() || d < beam.front().d;
         publish (best ? &p : nullptr, d, &render);
@@ -389,7 +390,7 @@ void CashMatcher::search()
         {
             const auto& s = ParameterMap::spec (i);
             // Skip what a single full-velocity note can't hear (glide, velocity -> cutoff).
-            if (s.weight <= 0.0f || juce::StringRef (s.id) == juce::StringRef (param::glideTime)
+            if (s.weight <= 0.0f || isSectionSwitch (i) || juce::StringRef (s.id) == juce::StringRef (param::glideTime)
                 || juce::StringRef (s.id) == juce::StringRef (param::velToCutoff))
                 continue;
             const auto idx = static_cast<size_t> (i);

@@ -35,6 +35,8 @@ namespace
     }
 
     double semisToRatio (float semis) { return std::exp2 (static_cast<double> (semis) / 12.0); }
+
+    constexpr float param_unisonDetuneRange = param2::unisonDetuneRange;
 }
 
 float CashVoice::oscillator (int wave, double t, double dt)
@@ -84,7 +86,7 @@ void CashVoice::Svf::setup (float cutoffHz, float q, double sampleRate)
     a3 = g * a2;
 }
 
-float CashVoice::Svf::process (float v0, int mode)
+float CashVoice::Svf::process (float v0, int mode, int prevMode, float fade)
 {
     const float v3 = v0 - ic2;
     const float v1 = a1 * ic1 + a2 * v3;
@@ -92,12 +94,18 @@ float CashVoice::Svf::process (float v0, int mode)
     ic1 = 2.0f * v1 - ic1;
     ic2 = 2.0f * v2 - ic2;
 
-    switch (mode)
+    // One SVF gives all three responses, so a type change is a plain crossfade.
+    auto pick = [&] (int m)
     {
-        case 1:  return v1;                 // band-pass
-        case 2:  return v0 - k * v1 - v2;   // high-pass
-        default: return v2;                 // low-pass
-    }
+        switch (m)
+        {
+            case 1:  return v1;                 // band-pass
+            case 2:  return v0 - k * v1 - v2;   // high-pass
+            default: return v2;                 // low-pass
+        }
+    };
+    const float now = pick (mode);
+    return fade >= 1.0f ? now : now * fade + pick (prevMode) * (1.0f - fade);
 }
 
 void CashVoice::setSampleRate (double newRate)
@@ -108,6 +116,9 @@ void CashVoice::setSampleRate (double newRate)
     ampEnv.setSampleRate (newRate);
     filterEnv.setSampleRate (newRate);
     cutoff.reset (newRate, 0.02);
+    unisonPos.reset (newRate, 0.02);
+    unisonGain.reset (newRate, 0.02);
+    ampSustainSet = fltSustainSet = -1.0f;
 }
 
 void CashVoice::resetPhases (double offset)
@@ -115,11 +126,31 @@ void CashVoice::resetPhases (double offset)
     phase1 = phase2 = phaseSub = offset - std::floor (offset);
 }
 
-void CashVoice::setUnison (float detuneSemis, float newPan, float gain)
+void CashVoice::setUnison (float position, float gain)
 {
-    detune = detuneSemis;
-    pan = juce::jlimit (-1.0f, 1.0f, newPan);
-    unisonGain = gain;
+    position = juce::jlimit (-1.0f, 1.0f, position);
+    if (active)
+    {
+        unisonPos.setTargetValue (position);
+        unisonGain.setTargetValue (gain);
+    }
+    else
+    {
+        unisonPos.setCurrentAndTargetValue (position);
+        unisonGain.setCurrentAndTargetValue (gain);
+    }
+}
+
+void CashVoice::updateEnvelopes (float ampSustain, float fltSustain)
+{
+    // Called per block, and every few samples while a sustain level is being
+    // automated (JUCE's ADSR jumps straight to a new sustain level).
+    auto a = ctx.params.ampEnv;
+    auto f = ctx.params.filterEnv;
+    a.sustain = ampSustainSet = ampSustain;
+    f.sustain = fltSustainSet = fltSustain;
+    ampEnv.setParameters (a);
+    filterEnv.setParameters (f);
 }
 
 void CashVoice::play (int midiNote, float vel, bool retrigger, float fromPitch, Glide glide)
@@ -146,13 +177,14 @@ void CashVoice::play (int midiNote, float vel, bool retrigger, float fromPitch, 
     if (! active)
     {
         filter.reset();
+        filterIdle = false;
         cutoff.setCurrentAndTargetValue (p.cutoffHz);
         phaseSub = phase1; // keep the sub locked to osc 1 at note start
     }
 
     active = true;
-    ampEnv.setParameters (p.ampEnv);
-    filterEnv.setParameters (p.filterEnv);
+    updateEnvelopes (ctx.lane[laneAmpSustain] != nullptr ? ctx.lane[laneAmpSustain][0] : p.ampEnv.sustain,
+                     ctx.lane[laneFltSustain] != nullptr ? ctx.lane[laneFltSustain][0] : p.filterEnv.sustain);
     ampEnv.noteOn();      // JUCE's ADSR restarts from its current level, so steals don't click
     filterEnv.noteOn();
     filterCountdown = 0;
@@ -181,76 +213,147 @@ void CashVoice::render (juce::AudioBuffer<float>& out, int startSample, int numS
     const auto& p = ctx.params;
     const double sr = sampleRate;
     const float nyquistSafe = static_cast<float> (sr * 0.45);
-    const float q = 0.5f + p.resonance * p.resonance * 14.5f;
-    const float velSemis = p.velCutoffSemis * (velocity - 1.0f);
 
-    ampEnv.setParameters (p.ampEnv);
-    filterEnv.setParameters (p.filterEnv);
+    const int off = startSample - ctx.lfoBase;
+    auto lane = [&] (int k) { return ctx.lane[k] + off; };
+    const float *osc1L = lane (laneOsc1Level), *osc2L = lane (laneOsc2Level), *subL = lane (laneSubLevel), *noiseL = lane (laneNoiseLevel);
+    const float *fine1 = lane (laneOsc1Fine), *fine2 = lane (laneOsc2Fine);
+    const float *reso = lane (laneReso), *envAmt = lane (laneEnvAmt), *keyTrack = lane (laneKeyTrack);
+    const float *lfoPitch = lane (laneLfoPitch), *lfoCutoff = lane (laneLfoCutoff), *lfoDrive = lane (laneLfoDrive);
+    const float *driveL = lane (laneDrive), *amount2 = lane (laneLfo2Amount), *pitchEnv = lane (lanePitchEnv);
+    const float *detune = lane (laneDetune), *spread = lane (laneSpread), *modVib = lane (laneModVib), *velCut = lane (laneVelCutoff);
+    const float *ampSus = lane (laneAmpSustain), *fltSus = lane (laneFltSustain);
+    const float *on1 = lane (laneOsc1On), *on2 = lane (laneOsc2On), *onSub = lane (laneSubNoiseOn);
+    const float *onFilter = lane (laneFilterOn), *onFltEnv = lane (laneFilterEnvOn), *onDrive = lane (laneDriveOn);
+    const float* onLfo2 = lane (laneLfo2On);
+    const float *wave1X = lane (laneOsc1Wave), *wave2X = lane (laneOsc2Wave), *typeX = lane (laneFilterType), *driveX = lane (laneDriveType);
+    const float *toCutoff = lane (laneToCutoff), *toPitch = lane (laneToPitch), *toAmp = lane (laneToAmp);
+    const float *toDrive = lane (laneToDrive), *toOsc2 = lane (laneToOsc2);
+
+    const bool sustainMoves = ctx.moving[laneAmpSustain] || ctx.moving[laneFltSustain];
+    updateEnvelopes (ampSus[0], fltSus[0]);
     cutoff.setTargetValue (p.cutoffHz);
 
+    // Whole-chunk bypasses: a switched-off section costs nothing.
+    const bool filterOff = ! ctx.moving[laneFilterOn] && onFilter[0] <= 0.0f;
+    const bool driveOff = ! ctx.moving[laneDriveOn] && onDrive[0] <= 0.0f;
+    if (filterOff)
+        filterIdle = true;
+
     const double hzPerSemitoneBase = 440.0 / sr; // A4 = 69
-    const double ratio1 = semisToRatio (p.osc1Semis), ratio2 = semisToRatio (p.osc2Semis);
-    const float fixedSemis = detune + ctx.bend * p.bendRange - 69.0f;
-    const float vibrato = p.lfoToPitch + ctx.modWheel * p.modVibratoSemis;
+    const bool fineMoves1 = ctx.moving[laneOsc1Fine], fineMoves2 = ctx.moving[laneOsc2Fine];
+    double ratio1 = semisToRatio (p.osc1Steps + fine1[0]), ratio2 = semisToRatio (p.osc2Steps + fine2[0]);
+    const float bendSemis = ctx.bend * p.bendRange;
 
-    // Stereo: centre = 1/1 (same as mono), hard side = 0/2, so a mono sum never changes.
     const int numChannels = out.getNumChannels();
-    const float gainL = numChannels > 1 ? 1.0f - pan : 1.0f;
-    const float gainR = numChannels > 1 ? 1.0f + pan : 1.0f;
-
-    const float* lfo = ctx.lfo + (startSample - ctx.lfoBase);
-    const float* lfo2 = ctx.lfo2 != nullptr ? ctx.lfo2 + (startSample - ctx.lfoBase) : nullptr;
-    const float mod2 = lfo2 != nullptr ? p.lfo2Amount : 0.0f;
-    auto routed = [&] (int target_, float v) { return p.lfo2Target == target_ ? v * mod2 : 0.0f; };
+    const float* lfo = ctx.lfo + off;
+    const float* lfo2 = ctx.lfo2 != nullptr ? ctx.lfo2 + off : nullptr;
 
     for (int i = 0; i < numSamples; ++i)
     {
         if (pitch != target)
             pitch = pitch < target ? juce::jmin (target, pitch + glideStep) : juce::jmax (target, pitch - glideStep);
 
+        if (sustainMoves && (ampSus[i] != ampSustainSet || fltSus[i] != fltSustainSet))
+            updateEnvelopes (ampSus[i], fltSus[i]);
+
         const float lfoValue = lfo[i];
         const float lfo2Value = lfo2 != nullptr ? lfo2[i] : 0.0f;
-        const float fEnv = filterEnv.getNextSample();
+        const float mod2 = lfo2 != nullptr ? amount2[i] : 0.0f;
+        const float fEnv = filterEnv.getNextSample() * onFltEnv[i];
 
-        const float pitchMod = lfoValue * vibrato + fEnv * p.pitchEnvSemis
-                             + routed (param2::toPitch, lfo2Value) * mod2 * 12.0f; // amount^2 * 12 st
-        const double base = hzPerSemitoneBase * semisToRatio (pitch + fixedSemis + pitchMod);
+        // Unison place, live: detune and spread follow their lanes.
+        const float place = unisonPos.getNextValue();
+        const float detuneSemis = place * 0.5f * detune[i] * param_unisonDetuneRange;
+        pan = juce::jlimit (-1.0f, 1.0f, place * spread[i]);
+
+        const float pitchMod = lfoValue * (lfoPitch[i] + ctx.modWheel * modVib[i]) + fEnv * pitchEnv[i]
+                             + lfo2Value * mod2 * toPitch[i] * mod2 * 12.0f; // amount^2 * 12 st
+        const double base = hzPerSemitoneBase * semisToRatio (pitch + (detuneSemis + bendSemis - 69.0f) + pitchMod);
+        if (fineMoves1) ratio1 = semisToRatio (p.osc1Steps + fine1[i]);
+        if (fineMoves2) ratio2 = semisToRatio (p.osc2Steps + fine2[i]);
         const double d1 = base * ratio1, d2 = base * ratio2, dSub = base * 0.5;
 
-        const float osc2Level = p.osc2Level * juce::jmax (0.0f, 1.0f + routed (param2::toOsc2, lfo2Value));
+        const float osc1Level = osc1L[i] * on1[i];
+        const float osc2Level = osc2L[i] * on2[i] * juce::jmax (0.0f, 1.0f + lfo2Value * mod2 * toOsc2[i]);
+        const float subLevel = subL[i] * onSub[i], noiseLevel = noiseL[i] * onSub[i];
+
+        auto wave = [] (int now, int prev, float x, double t, double dt)
+        {
+            const float v = oscillator (now, t, dt);
+            return x >= 1.0f ? v : v * x + oscillator (prev, t, dt) * (1.0f - x);
+        };
 
         float s = 0.0f;
-        if (p.osc1Level > 0.0f)  s += p.osc1Level * oscillator (p.osc1Wave, phase1, d1);
-        if (osc2Level > 0.0f)    s += osc2Level * oscillator (p.osc2Wave, phase2, d2);
-        if (p.subLevel > 0.0f)   s += p.subLevel * oscillator (0, phaseSub, dSub);
-        if (p.noiseLevel > 0.0f) s += p.noiseLevel * (noise.nextFloat() * 2.0f - 1.0f);
+        if (osc1Level > 0.0f)  s += osc1Level * wave (p.osc1Wave, p.prevOsc1Wave, wave1X[i], phase1, d1);
+        if (osc2Level > 0.0f)  s += osc2Level * wave (p.osc2Wave, p.prevOsc2Wave, wave2X[i], phase2, d2);
+        if (subLevel > 0.0f)   s += subLevel * oscillator (0, phaseSub, dSub);
+        if (noiseLevel > 0.0f) s += noiseLevel * (noise.nextFloat() * 2.0f - 1.0f);
 
         phase1 = advance (phase1, d1);
         phase2 = advance (phase2, d2);
         phaseSub = advance (phaseSub, dSub);
 
         const float baseCutoff = cutoff.getNextValue();
-        if (--filterCountdown <= 0)
+        float y = s;
+        if (! filterOff)
         {
-            const float semis = p.filterEnvAmt * fEnv * envCutoffRange + p.keyTrack * (pitch - 60.0f) + velSemis
-                              + lfoValue * p.lfoToCutoff * lfoCutoffRange + routed (param2::toCutoff, lfo2Value) * lfoCutoffRange;
-            const float hz = juce::jlimit (20.0f, nyquistSafe, baseCutoff * static_cast<float> (semisToRatio (semis)));
-            filter.setup (hz, q, sr);
-            filterCountdown = filterUpdateInterval;
+            const float wet = onFilter[i];
+            if (wet > 0.0f)
+            {
+                if (filterIdle)
+                {
+                    filter.reset(); // fading back in from a clean state
+                    filterIdle = false;
+                    filterCountdown = 0;
+                }
+                if (--filterCountdown <= 0)
+                {
+                    const float q = 0.5f + reso[i] * reso[i] * 14.5f;
+                    const float semis = envAmt[i] * fEnv * envCutoffRange + keyTrack[i] * (pitch - 60.0f) + velCut[i] * (velocity - 1.0f)
+                                      + lfoValue * lfoCutoff[i] * lfoCutoffRange + lfo2Value * mod2 * toCutoff[i] * lfoCutoffRange;
+                    const float hz = juce::jlimit (20.0f, nyquistSafe, baseCutoff * static_cast<float> (semisToRatio (semis)));
+                    filter.setup (hz, q, sr);
+                    filterCountdown = filterUpdateInterval;
+                }
+                const float filtered = filter.process (s, p.filterType, p.prevFilterType, typeX[i]);
+                y = wet >= 1.0f ? filtered : filtered * wet + s * (1.0f - wet);
+            }
+            else
+            {
+                filterIdle = true;
+            }
         }
 
-        float y = filter.process (s, p.filterType);
+        if (! driveOff)
+        {
+            const float wet = onDrive[i];
+            const float drive = juce::jlimit (0.0f, 1.0f, driveL[i] + lfoValue * lfoDrive[i] * 0.5f
+                                                          + lfo2Value * mod2 * toDrive[i] * 0.5f);
+            if (wet > 0.0f && drive > 0.0f)
+            {
+                const float x = driveX[i];
+                float shaped = shape (p.driveType, y, drive);
+                if (x < 1.0f)
+                    shaped = shaped * x + shape (p.prevDriveType, y, drive) * (1.0f - x);
+                y = wet >= 1.0f ? shaped : shaped * wet + y * (1.0f - wet);
+            }
+        }
 
-        const float drive = juce::jlimit (0.0f, 1.0f, p.drive + lfoValue * p.lfoToDrive * 0.5f
-                                                      + routed (param2::toDrive, lfo2Value) * 0.5f);
-        y = shape (p.driveType, y, drive);
+        const float tremolo = 1.0f - 0.5f * mod2 * (toAmp[i] * onLfo2[i]) * (1.0f - lfo2Value);
+        y *= ampEnv.getNextSample() * velGain * voiceGain * unisonGain.getNextValue() * tremolo;
 
-        const float tremolo = 1.0f - 0.5f * mod2 * (p.lfo2Target == param2::toAmp ? 1.0f - lfo2Value : 0.0f);
-        y *= ampEnv.getNextSample() * velGain * voiceGain * unisonGain * tremolo;
-
+        // Stereo: centre = 1/1 (same as mono), hard side = 0/2, so a mono sum never changes.
         const int at = startSample + i;
-        if (numChannels > 0) out.addSample (0, at, y * gainL);
-        if (numChannels > 1) out.addSample (1, at, y * gainR);
+        if (numChannels > 1)
+        {
+            out.addSample (0, at, y * (1.0f - pan));
+            out.addSample (1, at, y * (1.0f + pan));
+        }
+        else if (numChannels > 0)
+        {
+            out.addSample (0, at, y);
+        }
         for (int ch = 2; ch < numChannels; ++ch)
             out.addSample (ch, at, y);
 

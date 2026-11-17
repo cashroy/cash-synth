@@ -63,7 +63,8 @@ namespace
                  const juce::String& name, int defWave, float defFine, float defLevel)
     {
         l.add (std::make_unique<juce::AudioParameterChoice> (pid (wave), name + " Wave", waveNames(), defWave));
-        l.add (std::make_unique<juce::AudioParameterInt> (pid (oct), name + " Octave", -2, 2, 0));
+        l.add (std::make_unique<juce::AudioParameterInt> (pid (oct), name + " Octave", -2, 2, 0,
+               juce::AudioParameterIntAttributes().withLabel ("oct")));
         l.add (std::make_unique<juce::AudioParameterInt> (pid (semi), name + " Semi", -12, 12, 0,
                    juce::AudioParameterIntAttributes().withLabel ("st")));
         addFloat (l, fine, (name + " Fine").toRawUTF8(), { -100.0f, 100.0f }, defFine, unit (0, "ct"));
@@ -94,7 +95,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     l.add (std::make_unique<juce::AudioParameterChoice> (pid (filterType), "Filter Type", filterNames(), lowPass));
     addFloat (l, filterCutoff, "Filter Cutoff", skewed (20.0f, 20000.0f, 1000.0f), 4000.0f,
               FloatAttrs().withStringFromValueFunction ([] (float v, int)
-              { return v >= 1000.0f ? fmt (v / 1000.0f, 2, "kHz") : fmt (v, 0, "Hz"); }));
+                          { return v >= 1000.0f ? fmt (v / 1000.0f, 2, "kHz") : fmt (v, 0, "Hz"); })
+                          .withValueFromStringFunction ([] (const juce::String& s)
+                          { return s.getFloatValue() * (s.containsIgnoreCase ("k") ? 1000.0f : 1.0f); }));
     addFloat (l, filterReso, "Filter Resonance", { 0.0f, 1.0f }, 0.2f, percent());
     addFloat (l, filterEnvAmt, "Filter Env Amount", { -1.0f, 1.0f }, 0.3f, percent());
     addFloat (l, filterKeyTrack, "Filter Key Track", { 0.0f, 1.0f }, 0.0f, percent());
@@ -102,10 +105,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     addEnv (l, fltAttack, fltDecay, fltSustain, fltRelease, "Filter Env", 0.005f, 0.4f, 0.3f, 0.4f);
     addEnv (l, ampAttack, ampDecay, ampSustain, ampRelease, "Amp Env", 0.005f, 0.3f, 0.8f, 0.3f);
 
-    l.add (std::make_unique<juce::AudioParameterChoice> (pid (lfoWave), "LFO Wave", waveNames(), sine));
-    addFloat (l, lfoRate, "LFO Rate", skewed (0.05f, 20.0f, 2.0f), 5.0f, unit (2, "Hz"));
-    addFloat (l, lfoToPitch, "LFO to Pitch", skewed (0.0f, 12.0f, 1.0f), 0.0f, unit (2, "st"));
-    addFloat (l, lfoToCutoff, "LFO to Cutoff", { 0.0f, 1.0f }, 0.0f, percent());
+    // Display names say "LFO 1" since M6 added LFO 2 (IDs unchanged).
+    l.add (std::make_unique<juce::AudioParameterChoice> (pid (lfoWave), "LFO 1 Wave", waveNames(), sine));
+    addFloat (l, lfoRate, "LFO 1 Rate", skewed (0.05f, 20.0f, 2.0f), 5.0f, unit (2, "Hz"));
+    addFloat (l, lfoToPitch, "LFO 1 to Pitch", skewed (0.0f, 12.0f, 1.0f), 0.0f, unit (2, "st"));
+    addFloat (l, lfoToCutoff, "LFO 1 to Cutoff", { 0.0f, 1.0f }, 0.0f, percent());
 
     addFloat (l, velocitySens, "Velocity Sensitivity", { 0.0f, 1.0f }, 0.7f, percent());
     addFloat (l, masterGain, "Master Gain", { -48.0f, 6.0f }, -6.0f, unit (1, "dB"));
@@ -113,7 +117,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     // M6 additions (append-only, see ParameterMap). All default to "off".
     l.add (std::make_unique<juce::AudioParameterChoice> (pid (driveType), "Drive Type", driveNames(), softClip));
     addFloat (l, driveAmount, "Drive Amount", { 0.0f, 1.0f }, 0.0f, percent());
-    addFloat (l, lfoToDrive, "LFO to Drive", { 0.0f, 1.0f }, 0.0f, percent());
+    addFloat (l, lfoToDrive, "LFO 1 to Drive", { 0.0f, 1.0f }, 0.0f, percent());
     l.add (std::make_unique<juce::AudioParameterChoice> (pid (lfo2Wave), "LFO 2 Wave", waveNames(), triangle));
     addFloat (l, lfo2Rate, "LFO 2 Rate", skewed (0.05f, 20.0f, 2.0f), 0.5f, unit (2, "Hz"));
     addFloat (l, lfo2Amount, "LFO 2 Amount", { 0.0f, 1.0f }, 0.0f, percent());
@@ -134,6 +138,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     addFloat (l, modVibrato, "Mod Wheel Vibrato", { 0.0f, 1.0f }, 0.5f, percent());
     addFloat (l, velToCutoff, "Velocity to Cutoff", { 0.0f, 1.0f }, 0.0f, percent());
 
+    // M8 section switches (append-only). All on by default = the M7 sound.
+    for (auto [id, name] : { std::pair { osc1On, "Osc 1 On" }, { osc2On, "Osc 2 On" }, { subNoiseOn, "Sub/Noise On" },
+                             { filterOn, "Filter On" }, { filterEnvOn, "Filter Env On" }, { driveOn, "Drive On" },
+                             { lfo1On, "LFO 1 On" }, { lfo2On, "LFO 2 On" }, { unisonOn, "Unison On" }, { glideOn, "Glide On" } })
+        l.add (std::make_unique<juce::AudioParameterBool> (pid (id), name, true));
+
     return l;
+}
+
+juce::StringArray sectionSwitchIds()
+{
+    return { osc1On, osc2On, subNoiseOn, filterOn, filterEnvOn, driveOn, lfo1On, lfo2On, unisonOn, glideOn };
 }
 }

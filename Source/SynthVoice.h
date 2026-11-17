@@ -4,45 +4,59 @@
 
 namespace cash
 {
-// Per-block parameter snapshot shared (read-only) by all voices.
+// Per-sample control lanes. The engine fills one value per sample of the current
+// chunk for each lane (smoothed knobs, section on/off gates, choice crossfades),
+// so automation never steps; voices only read them.
+enum Lane : int
+{
+    laneOsc1Level, laneOsc2Level, laneSubLevel, laneNoiseLevel,
+    laneOsc1Fine, laneOsc2Fine,                 // semitones (the fine part of the tuning)
+    laneReso, laneEnvAmt, laneKeyTrack,
+    laneLfoPitch, laneLfoCutoff, laneLfoDrive,  // LFO 1 amounts
+    laneDrive, laneLfo2Amount, lanePitchEnv,    // pitch env in semitones
+    laneDetune, laneSpread, laneModVib, laneVelCutoff,
+    laneAmpSustain, laneFltSustain,
+
+    // M8 section gates, 0 = off .. 1 = on (ramped, so switching never clicks).
+    laneOsc1On, laneOsc2On, laneSubNoiseOn, laneFilterOn, laneFilterEnvOn, laneDriveOn,
+    laneLfo2On, // the LFO 2 buffer is gated already; tremolo's "1 - x" form needs the gate itself
+
+    // Choice crossfades: weight of the new choice (0 = all previous, 1 = all new).
+    laneOsc1Wave, laneOsc2Wave, laneFilterType, laneDriveType,
+
+    // LFO 2 routing weight per target (param::LfoTarget order).
+    laneToCutoff, laneToPitch, laneToAmp, laneToDrive, laneToOsc2,
+
+    numLanes
+};
+
+// Per-block settings that don't need per-sample smoothing (choices, tuning
+// steps, envelope times, things only read at note-on).
 struct SynthParams
 {
-    int   osc1Wave = 2, osc2Wave = 2;
-    float osc1Semis = 0.0f, osc2Semis = 0.0f; // octave*12 + semi + fine/100
-    float osc1Level = 0.8f, osc2Level = 0.5f;
-    float subLevel = 0.0f, noiseLevel = 0.0f;
+    int   osc1Wave = 2, osc2Wave = 2, prevOsc1Wave = 2, prevOsc2Wave = 2;
+    float osc1Steps = 0.0f, osc2Steps = 0.0f; // octave*12 + semi (fine comes from its lane)
 
-    int   filterType = 0;
-    float cutoffHz = 4000.0f, resonance = 0.2f, filterEnvAmt = 0.3f, keyTrack = 0.0f;
+    int   filterType = 0, prevFilterType = 0;
+    float cutoffHz = 4000.0f;
 
-    juce::ADSR::Parameters ampEnv, filterEnv;
+    juce::ADSR::Parameters ampEnv, filterEnv; // sustain levels come from their lanes
 
-    float lfoToPitch = 0.0f;  // semitones
-    float lfoToCutoff = 0.0f; // 0..1
     float velocitySens = 0.7f;
-
-    // M6
-    int   driveType = 0;          // param::DriveType
-    float drive = 0.0f;           // 0..1
-    float lfoToDrive = 0.0f;      // LFO 1 -> drive, 0..1
-    int   lfo2Target = 0;         // param::LfoTarget
-    float lfo2Amount = 0.0f;      // 0..1
-    float pitchEnvSemis = 0.0f;   // filter env -> pitch, semitones at full env
-
-    // M7
-    float bendRange = 2.0f;       // semitones at full wheel
-    float modVibratoSemis = 0.0f; // LFO 1 pitch depth added at full mod wheel
-    float velCutoffSemis = 0.0f;  // cutoff drop for velocity 0 (scaled by 1 - velocity)
+    int   driveType = 0, prevDriveType = 0;   // param::DriveType
+    float bendRange = 2.0f;                   // semitones at full wheel
 };
 
 struct VoiceContext
 {
     SynthParams params;
-    const float* lfo = nullptr;  // one LFO 1 value per sample of the current chunk
-    const float* lfo2 = nullptr; // same for LFO 2
-    int lfoBase = 0;             // buffer sample index that lfo[0] corresponds to
-    float bend = 0.0f;           // pitch wheel, -1..1 (shared by every voice)
-    float modWheel = 0.0f;       // CC 1, 0..1
+    const float* lane[numLanes] {};  // lane[k][i] for chunk sample i
+    bool moving[numLanes] {};        // the lane changes somewhere in this chunk
+    const float* lfo = nullptr;      // LFO 1 (gated) per sample of the current chunk
+    const float* lfo2 = nullptr;     // LFO 2 (gated)
+    int lfoBase = 0;                 // buffer sample index that index 0 of the chunk arrays is
+    float bend = 0.0f;               // pitch wheel, -1..1 (shared by every voice)
+    float modWheel = 0.0f;           // CC 1, 0..1
 };
 
 // One voice. Owned and allocated by SynthEngine (no juce::Synthesiser: it has
@@ -68,8 +82,10 @@ public:
     void kill();
     bool isActive() const { return active; }
 
-    // Unison place: detune offset in semitones, pan -1..1, and a level scale.
-    void setUnison (float detuneSemis, float pan, float gain);
+    // Unison place: -1..1 across the stack (scaled live by the detune and spread
+    // lanes) and a level scale. A sounding voice (held, or stolen while it rings)
+    // glides to its new place; a silent one jumps there. Call before play().
+    void setUnison (float position, float gain);
 
     void render (juce::AudioBuffer<float>&, int startSample, int numSamples);
     void resetPhases (double offset); // engine reset only (oscillators free-run otherwise)
@@ -77,6 +93,7 @@ public:
     int getNote() const { return note; }
     float getPitch() const { return pitch; }
     float getPan() const { return pan; }
+    float getVelocity() const { return velocity; }
 
     // Engine bookkeeping.
     bool keyDown = false, sustained = false;
@@ -89,17 +106,21 @@ private:
     {
         float ic1 = 0.0f, ic2 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, k = 1.0f;
         void setup (float cutoffHz, float q, double sampleRate);
-        float process (float in, int mode);
+        float process (float in, int mode, int prevMode, float fade); // fade = weight of `mode`
         void reset() { ic1 = ic2 = 0.0f; }
     };
 
     static float oscillator (int wave, double phase, double inc);
+    void updateEnvelopes (float ampSustain, float fltSustain);
 
     const VoiceContext& ctx;
     double sampleRate = 44100.0;
     juce::ADSR ampEnv, filterEnv;
+    float ampSustainSet = -1.0f, fltSustainSet = -1.0f;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> cutoff { 4000.0f };
+    juce::SmoothedValue<float> unisonPos { 0.0f }, unisonGain { 1.0f };
     Svf filter;
+    bool filterIdle = false; // the filter was fully bypassed: clear it before it comes back
     juce::Random noise;
 
     double phase1 = 0.0, phase2 = 0.0, phaseSub = 0.0;
@@ -107,7 +128,7 @@ private:
     int note = 60;
     float velocity = 1.0f, velGain = 1.0f;
     float pitch = 60.0f, target = 60.0f, glideStep = 0.0f; // semitones (MIDI note), per sample
-    float detune = 0.0f, pan = 0.0f, unisonGain = 1.0f;
+    float pan = 0.0f;
     int filterCountdown = 0;
 };
 }

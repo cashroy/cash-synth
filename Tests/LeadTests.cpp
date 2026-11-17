@@ -347,6 +347,7 @@ TEST_CASE ("Bend range, mod wheel vibrato and velocity to cutoff", "[lead][contr
     // Mod wheel adds LFO 1 vibrato only when it's up and the depth is set.
     auto take = [&r] (int wheel)
     {
+        r.reset(); // params set since the last render would otherwise ramp in (M8 smoothing)
         auto out = r.render (0.5, { { 0, juce::MidiMessage::controllerEvent (1, 1, wheel) }, { 0, on (69) } });
         r.reset();
         return out.left;
@@ -402,7 +403,9 @@ TEST_CASE ("Old codes and projects load with lead mode off", "[lead][state][cash
     REQUIRE (xml != nullptr);
     auto root = juce::ValueTree::fromXml (*xml);
     auto params = root.getChildWithName ("PARAMS");
-    for (auto* id : m7)
+    juce::StringArray missing (m7, static_cast<int> (std::size (m7)));
+    missing.addArray (cash::param::sectionSwitchIds()); // M8 didn't exist either
+    for (auto& id : missing)
     {
         params.removeChild (params.getChildWithProperty ("id", id), nullptr);
         root.getChildWithName ("Vault").getChild (0).getChildWithName ("Patch").removeProperty (id, nullptr);
