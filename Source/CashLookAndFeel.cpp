@@ -1,4 +1,5 @@
 #include "CashLookAndFeel.h"
+#include "BillArt.h"
 
 namespace cash
 {
@@ -22,6 +23,28 @@ CashLookAndFeel::CashLookAndFeel()
     setColour (juce::TextEditor::textColourId, text);
     setColour (juce::TextEditor::highlightColourId, goldDim);
     setColour (juce::CaretComponent::caretColourId, gold);
+    setColour (juce::TextButton::textColourOffId, gold);
+    setColour (juce::TextButton::textColourOnId, gold);
+    setColour (juce::TooltipWindow::backgroundColourId, knobBody);
+    setColour (juce::TooltipWindow::textColourId, text);
+    setColour (juce::TooltipWindow::outlineColourId, goldDim);
+}
+
+void CashLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool isOver, bool isDown)
+{
+    auto r = b.getLocalBounds().toFloat().reduced (0.5f);
+    if (isDown)
+        r = r.reduced (1.0f);
+    g.setColour (isOver && b.isEnabled() ? colours::panelEdge : colours::knobBody);
+    g.fillRoundedRectangle (r, 5.0f);
+    g.setColour (b.isEnabled() ? colours::gold : colours::panelEdge);
+    g.drawRoundedRectangle (r, 5.0f, 1.2f);
+}
+
+juce::Font CashLookAndFeel::getTextButtonFont (juce::TextButton&, int height)
+{
+    return juce::FontOptions (juce::Font::getDefaultSerifFontName(), juce::jmin (15.0f, static_cast<float> (height) * 0.55f), juce::Font::bold)
+        .withKerningFactor (0.08f);
 }
 
 void CashLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
@@ -50,16 +73,16 @@ void CashLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wid
     g.setColour (slider.isEnabled() ? gold : goldDim);
     g.strokePath (value, { track, juce::PathStrokeType::curved, juce::PathStrokeType::rounded });
 
-    const float bodyRadius = radius - track * 2.2f;
-    g.setColour (knobBody);
-    g.fillEllipse (juce::Rectangle<float> (bodyRadius * 2.0f, bodyRadius * 2.0f).withCentre (centre));
-    g.setColour (goldDim);
-    g.drawEllipse (juce::Rectangle<float> (bodyRadius * 2.0f, bodyRadius * 2.0f).withCentre (centre), 1.0f);
+    // The knob itself is a coin; a notch engraved at the rim shows where it points.
+    const float coinRadius = radius - track * 1.9f;
+    art::drawCoin (g, centre, coinRadius, {}, slider.isMouseOverOrDragging(), slider.isEnabled());
 
-    const auto tip = centre.getPointOnCircumference (bodyRadius * 0.85f, angle);
-    const auto base = centre.getPointOnCircumference (bodyRadius * 0.25f, angle);
-    g.setColour (gold);
-    g.drawLine ({ base, tip }, 2.0f);
+    const auto tip = centre.getPointOnCircumference (coinRadius * 0.7f, angle);
+    const auto base = centre.getPointOnCircumference (coinRadius * 0.2f, angle);
+    g.setColour (juce::Colour (0xfff6dc86).withAlpha (0.8f));
+    g.drawLine ({ base.translated (0.0f, 1.0f), tip.translated (0.0f, 1.0f) }, 2.0f);
+    g.setColour (juce::Colour (0xff4a370e));
+    g.drawLine ({ base, tip }, 2.2f);
 }
 
 void CashLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool, int, int, int, int, juce::ComboBox& box)

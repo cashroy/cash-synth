@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
+#include "ParameterMap.h"
 #include "Parameters.h"
 
 namespace
@@ -90,7 +91,7 @@ TEST_CASE ("Parameter layout is complete and defaults are in range", "[params]")
 {
     Rig r;
     const auto& params = r.p.getParameters();
-    CHECK (params.size() == 31);
+    CHECK (params.size() == cash::ParameterMap::numParams); // 81 since M11
 
     for (auto* p : params)
     {

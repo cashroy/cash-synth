@@ -1,17 +1,32 @@
 #include "PluginEditor.h"
+#include "CashCode.h"
 
 namespace
 {
-    constexpr int headerHeight = 50;
     constexpr int margin = 12;
+    constexpr int billHeight = 470;
+    constexpr int stashHeight = 26;
 }
 
 CashSynthAudioProcessorEditor::CashSynthAudioProcessorEditor (CashSynthAudioProcessor& p)
-    : AudioProcessorEditor (&p), advanced (p.getState())
+    : AudioProcessorEditor (&p), processor (p), front (p), back (p.getState(), &p.getLocks()), tray (p), stashBar (p), match (p)
 {
     setLookAndFeel (&lookAndFeel);
-    addAndMakeVisible (advanced);
-    setSize (1100, 640);
+    addAndMakeVisible (front);
+    addChildComponent (back);
+    addAndMakeVisible (tray);
+    addAndMakeVisible (stashBar);
+    addChildComponent (match);
+    addChildComponent (flipCard);
+
+    front.onFlip = back.onFlip = [this] { flip(); };
+    front.onMoneyMoved = tray.onMoneyMoved = stashBar.onMoneyMoved = match.onMoneyMoved = [this] { syncFromProcessor(); };
+    stashBar.onMatch = [this] { showMatch (! match.isVisible()); };
+    match.onClose = [this] { showMatch (false); };
+
+    shownPatch = processor.getPatch();
+    setSize (width, height);
+    startTimerHz (15);
 }
 
 CashSynthAudioProcessorEditor::~CashSynthAudioProcessorEditor()
@@ -19,23 +34,86 @@ CashSynthAudioProcessorEditor::~CashSynthAudioProcessorEditor()
     setLookAndFeel (nullptr);
 }
 
+void CashSynthAudioProcessorEditor::showMatch (bool show)
+{
+    if (show == match.isVisible())
+        return;
+    flipCard.finish();
+    if (show)
+    {
+        front.setVisible (false);
+        back.setVisible (false);
+        match.setVisible (true);
+    }
+    else
+    {
+        match.setVisible (false);
+        back.setVisible (flipped);
+        front.setVisible (! flipped);
+    }
+}
+
+void CashSynthAudioProcessorEditor::filesDropped (const juce::StringArray& files, int x, int y)
+{
+    showMatch (true);
+    match.filesDropped (files, x, y);
+}
+
+void CashSynthAudioProcessorEditor::flip()
+{
+    if (match.isVisible())
+        showMatch (false); // back to the side you were on, then turn it
+    flipCard.finish();
+    flipped = ! flipped;
+    juce::Component& from = flipped ? static_cast<juce::Component&> (front) : back;
+    juce::Component& to = flipped ? static_cast<juce::Component&> (back) : front;
+    if (isShowing())
+    {
+        flipCard.start (from, to);
+        repaint(); // the desk shadow goes while the card draws its own
+    }
+    else
+    {
+        to.setVisible (true);
+        from.setVisible (false);
+    }
+}
+
+void CashSynthAudioProcessorEditor::syncFromProcessor()
+{
+    const auto patch = processor.getPatch();
+    if (! cash::samePatch (patch, shownPatch))
+    {
+        shownPatch = patch;
+        front.setSerial (cash::CashCode::serialNumber (patch));
+    }
+    tray.sync();
+    stashBar.sync();
+}
+
 void CashSynthAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (cash::colours::background);
-
-    auto header = getLocalBounds().removeFromTop (headerHeight).reduced (margin + 4, 0);
-    g.setColour (cash::colours::gold);
-    g.setFont (juce::FontOptions (28.0f, juce::Font::bold));
-    g.drawText ("Cash Synth", header, juce::Justification::centredLeft);
-
-    g.setColour (cash::colours::goldDim);
-    g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("by Cashroy", header, juce::Justification::centredRight);
+    // Dark desk with a soft pool of light under the bill.
+    const auto r = getLocalBounds().toFloat();
+    g.setGradientFill (juce::ColourGradient (cash::colours::background.darker (0.2f), r.getCentreX(), r.getHeight() * 0.35f,
+                                             cash::colours::desk, 0.0f, r.getBottom(), true));
+    g.fillAll();
+    if (! flipCard.isTurning())
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (front.getBounds().toFloat().translated (3.0f, 5.0f), 8.0f);
+    }
 }
 
 void CashSynthAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds();
-    area.removeFromTop (headerHeight);
-    advanced.setBounds (area.reduced (margin, 0).withTrimmedBottom (margin));
+    auto area = getLocalBounds().reduced (margin);
+    stashBar.setBounds (area.removeFromTop (stashHeight));
+    area.removeFromTop (8);
+    const auto bill = area.removeFromTop (billHeight);
+    front.setBounds (bill);
+    back.setBounds (bill);
+    match.setBounds (bill);
+    area.removeFromTop (margin);
+    tray.setBounds (area);
 }
