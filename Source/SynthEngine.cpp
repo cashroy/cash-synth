@@ -76,6 +76,10 @@ SynthEngine::SynthEngine (const RawLookup& lookup)
     bind (lfo2On, param::lfo2On);
     bind (unisonOn, param::unisonOn);
     bind (glideOn, param::glideOn);
+    bind (lfo1Sync, param::lfo1Sync);
+    bind (lfo1Note, param::lfo1Note);
+    bind (lfo2Sync, param::lfo2Sync);
+    bind (lfo2Note, param::lfo2Note);
 
     for (int i = 0; i < numVoices; ++i)
         voices.push_back (std::make_unique<CashVoice> (ctx));
@@ -110,6 +114,7 @@ void SynthEngine::reset()
     lastPitch = -1.0f;
     ctx.bend = ctx.modWheel = 0.0f;
     lfo1.phase = lfo2.phase = 0.0;
+    wasLocked = false;
     // Oscillators free-run between notes; a reset makes renders repeatable (Cash Match relies on it).
     // Voice 0 starts at phase 0 as before; the others are staggered so unison voices don't start in phase.
     for (size_t i = 0; i < voices.size(); ++i)
@@ -222,8 +227,9 @@ void SynthEngine::readParameters()
     const int newUnison = unisonOn.get() > 0.5f ? juce::jlimit (1, param::maxUnison, unisonVoices.asInt()) : 1;
     changeVoicing (voiceMode.asInt(), newUnison);
 
-    for (auto [lfo, waveParam, rateParam, onParam] : { std::tuple { &lfo1, &lfoWave, &lfoRate, &lfo1On },
-                                                       std::tuple { &lfo2, &lfo2Wave, &lfo2Rate, &lfo2On } })
+    for (auto [lfo, waveParam, rateParam, onParam, syncParam, noteParam] :
+             { std::tuple { &lfo1, &lfoWave, &lfoRate, &lfo1On, &lfo1Sync, &lfo1Note },
+               std::tuple { &lfo2, &lfo2Wave, &lfo2Rate, &lfo2On, &lfo2Sync, &lfo2Note } })
     {
         if (const int w = waveParam->asInt(); w != lfo->wave)
         {
@@ -232,7 +238,11 @@ void SynthEngine::readParameters()
             lfo->fade.setCurrentAndTargetValue (0.0f);
             lfo->fade.setTargetValue (1.0f);
         }
-        lfo->rate.setTargetValue (rateParam->get());
+        // TIME: Hz as set. SYNC: the note value at the host tempo (the rate ramps, so a
+        // BPM, note or mode change never jumps the speed).
+        lfo->synced = syncParam->asInt() == param::syncMode;
+        lfo->lengthQn = tempo::noteQuarters (noteParam->asInt(), hostTempo);
+        lfo->rate.setTargetValue (lfo->synced ? static_cast<float> (hostTempo.bpm / 60.0 / lfo->lengthQn) : rateParam->get());
         lfo->gate.setTargetValue (gate (*onParam));
     }
 }
@@ -248,23 +258,53 @@ float SynthEngine::Lfo::shape (int wave, double t)
     }
 }
 
-void SynthEngine::fillLfo (Lfo& l, std::vector<float>& out, int n)
+void SynthEngine::fillLfo (Lfo& l, std::vector<float>& out, int n, int startSample)
 {
+    // Synced while the host plays: the phase follows the song position, so the LFO
+    // sits on the beat (phase 0 on every multiple of its length from the song start).
+    const bool locked = l.synced && hostTempo.locked();
+    const double qnPerSample = hostTempo.bpm / 60.0 / sampleRate;
+    const double qn0 = hostTempo.ppq + static_cast<double> (startSample) * qnPerSample;
+    auto songPhase = [&l, qn0, qnPerSample] (int i)
+    {
+        const double x = (qn0 + static_cast<double> (i) * qnPerSample) / l.lengthQn;
+        return x - std::floor (x);
+    };
+
     if (! l.gate.isSmoothing() && l.gate.getTargetValue() <= 0.0f)
     {
-        // Switched off: no LFO work at all (its phase waits where it stopped).
+        // Switched off: no LFO work at all (its phase waits where it stopped, or
+        // keeps its place in the song when locked).
         juce::FloatVectorOperations::clear (out.data(), n);
         l.rate.skip (n);
         l.fade.skip (n);
+        if (locked)
+            l.phase = songPhase (n);
         return;
     }
+
+    // A locked LFO that is off the song position (note value just changed, mode just
+    // switched to SYNC) catches up over ~20 ms instead of jumping; on time, it stays exact.
+    const double pull = 1.0 - std::exp (-1.0 / (0.02 * sampleRate));
 
     for (int i = 0; i < n; ++i)
     {
         const double t = l.phase;
-        l.phase += static_cast<float> (l.rate.getNextValue() / sampleRate);
-        if (l.phase >= 1.0)
-            l.phase -= 1.0;
+        if (locked)
+        {
+            const double target = songPhase (i + 1);
+            double ahead = l.phase + l.rate.getNextValue() / sampleRate;
+            double err = target - ahead;
+            err -= std::floor (err + 0.5); // shortest way round
+            ahead += std::abs (err) < 1.0e-4 ? err : err * pull;
+            l.phase = ahead - std::floor (ahead);
+        }
+        else
+        {
+            l.phase += static_cast<float> (l.rate.getNextValue() / sampleRate);
+            if (l.phase >= 1.0)
+                l.phase -= 1.0;
+        }
 
         float v = Lfo::shape (l.wave, t);
         if (l.fade.isSmoothing())
@@ -291,9 +331,26 @@ void SynthEngine::fillLanes (int n)
     }
 }
 
-void SynthEngine::render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi)
+void SynthEngine::render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const tempo::Info& tempo)
 {
+    hostTempo = tempo;
     readParameters();
+
+    // Transport just started, or the host seeked / looped: synced LFOs jump straight
+    // to the song position (the song jumped too). Otherwise they glide onto it.
+    const bool locked = hostTempo.locked();
+    if (locked && (! wasLocked || std::abs (hostTempo.ppq - expectedPpq) > 1.0e-3))
+    {
+        for (auto* l : { &lfo1, &lfo2 })
+            if (l->synced)
+            {
+                const double x = hostTempo.ppq / l->lengthQn;
+                l->phase = x - std::floor (x);
+            }
+    }
+    wasLocked = locked;
+    expectedPpq = hostTempo.ppq + hostTempo.bpm / 60.0 / sampleRate * buffer.getNumSamples();
+
     gain.setTargetValue (juce::Decibels::decibelsToGain (masterGain.get(), -48.0f));
 
     const int total = buffer.getNumSamples();
@@ -306,8 +363,8 @@ void SynthEngine::render (juce::AudioBuffer<float>& buffer, const juce::MidiBuff
     {
         const int n = juce::jmin (chunk, total - start);
         fillLanes (n);
-        fillLfo (lfo1, lfoBuffer, n);
-        fillLfo (lfo2, lfo2Buffer, n);
+        fillLfo (lfo1, lfoBuffer, n, start);
+        fillLfo (lfo2, lfo2Buffer, n, start);
         ctx.lfo = lfoBuffer.data();
         ctx.lfo2 = lfo2Buffer.data();
         ctx.lfoBase = start;

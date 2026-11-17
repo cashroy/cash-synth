@@ -405,6 +405,7 @@ TEST_CASE ("Old codes and projects load with lead mode off", "[lead][state][cash
     auto params = root.getChildWithName ("PARAMS");
     juce::StringArray missing (m7, static_cast<int> (std::size (m7)));
     missing.addArray (cash::param::sectionSwitchIds()); // M8 didn't exist either
+    missing.addArray ({ cash::param::lfo1Sync, cash::param::lfo1Note, cash::param::lfo2Sync, cash::param::lfo2Note }); // nor M10
     for (auto& id : missing)
     {
         params.removeChild (params.getChildWithProperty ("id", id), nullptr);

@@ -1,4 +1,5 @@
 #include "Parameters.h"
+#include "Tempo.h"
 
 namespace cash::param
 {
@@ -10,6 +11,7 @@ juce::StringArray voiceModeNames() { return { "Poly", "Mono", "Legato" }; }
 juce::StringArray glideModeNames() { return { "Always", "Legato" }; }
 juce::StringArray glideTypeNames() { return { "Time", "Rate" }; }
 juce::StringArray priorityNames()  { return { "Last", "Low", "High" }; }
+juce::StringArray rateModeNames()  { return { "Time", "Sync" }; }
 
 namespace
 {
@@ -143,6 +145,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
                              { filterOn, "Filter On" }, { filterEnvOn, "Filter Env On" }, { driveOn, "Drive On" },
                              { lfo1On, "LFO 1 On" }, { lfo2On, "LFO 2 On" }, { unisonOn, "Unison On" }, { glideOn, "Glide On" } })
         l.add (std::make_unique<juce::AudioParameterBool> (pid (id), name, true));
+
+    // M10 tempo sync (append-only). Default TIME = the M9 sound; note value 1/4.
+    for (auto [sync, note, name] : { std::tuple { lfo1Sync, lfo1Note, "LFO 1" }, { lfo2Sync, lfo2Note, "LFO 2" } })
+    {
+        l.add (std::make_unique<juce::AudioParameterChoice> (pid (sync), juce::String (name) + " Rate Mode", rateModeNames(), timeMode));
+        l.add (std::make_unique<juce::AudioParameterChoice> (pid (note), juce::String (name) + " Sync Rate", tempo::noteNames(), tempo::defaultNote));
+    }
 
     return l;
 }

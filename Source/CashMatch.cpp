@@ -93,6 +93,10 @@ namespace
             // A single full-velocity note can't hear glide or velocity -> cutoff.
             if (id == juce::StringRef (glideTime) || id == juce::StringRef (velToCutoff) || id == juce::StringRef (glideOn))
                 return false;
+            // M10: matched in Hz, so the sync mode and note values are left alone.
+            for (auto* syncId : { lfo1Sync, lfo1Note, lfo2Sync, lfo2Note })
+                if (id == juce::StringRef (syncId))
+                    return false;
             return s.weight > 0.0f || isSectionSwitch (i);
         };
 
@@ -146,7 +150,7 @@ namespace
     int countOff (const Patch& p)
     {
         int n = 0;
-        for (int i = ParameterMap::numParamsV3; i < ParameterMap::numParams; ++i)
+        for (int i = ParameterMap::numParamsV3; i < ParameterMap::numParamsV4; ++i)
             n += p[static_cast<size_t> (i)] < 0.5f ? 1 : 0;
         return n;
     }
@@ -634,7 +638,7 @@ void CashMatcher::search()
                 polish += static_cast<int> (variants (i, 0.5f, 0.05f).size());
         }
         expectedEvaluations = 7 + budget.explore + budget.generations * budget.children + budget.polishRounds * polish
-                            + (ParameterMap::numParams - ParameterMap::numParamsV3) + 1;
+                            + (ParameterMap::numParamsV4 - ParameterMap::numParamsV3) + 1;
     }
 
     auto publish = [this] (const Cand& best)
@@ -652,10 +656,13 @@ void CashMatcher::search()
     };
 
     // Scores a batch in parallel and keeps the best few. False when cancelled.
-    auto take = [&] (const std::vector<Patch>& patches) -> bool
+    auto take = [&] (std::vector<Patch> patches) -> bool
     {
         if (cancelled())
             return false;
+        // M10: matches are made in Hz (renders run at 120 BPM, stopped); sync is the user's call.
+        for (auto& p : patches)
+            unsync (p);
         const auto evals = evaluateBatch (patches);
         if (cancelled())
             return false;
@@ -775,7 +782,7 @@ void CashMatcher::search()
         const float bestD = beam.front().e.d, allowed = bestD + 0.003f;
         std::vector<Patch> batch;
         std::vector<int> which;
-        for (int i = ParameterMap::numParamsV3; i < ParameterMap::numParams; ++i)
+        for (int i = ParameterMap::numParamsV3; i < ParameterMap::numParamsV4; ++i)
             if (best[static_cast<size_t> (i)] >= 0.5f)
             {
                 batch.push_back (best);

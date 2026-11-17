@@ -72,6 +72,63 @@ void AdvancedPanel::SectionSwitch::paint (juce::Graphics& g)
     g.drawText (on ? "ON" : "OFF", label, juce::Justification::centred, false);
 }
 
+//============================================================================== RateModeSwitch
+AdvancedPanel::RateModeSwitch::RateModeSwitch (juce::RangedAudioParameter& p, std::function<void (bool)> onChange)
+    : paramId (p.paramID),
+      attachment (p, [this] (float v)
+                  {
+                      synced = juce::roundToInt (v) == param::syncMode;
+                      repaint();
+                      if (changed)
+                          changed (synced);
+                  }),
+      changed (std::move (onChange))
+{
+    setTooltip (p.getName (64) + ": TIME = Hz, SYNC = note value at the host tempo");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setRepaintsOnMouseActivity (true);
+    attachment.sendInitialUpdate();
+}
+
+void AdvancedPanel::RateModeSwitch::toggle()
+{
+    attachment.setValueAsCompleteGesture (synced ? static_cast<float> (param::timeMode) : static_cast<float> (param::syncMode));
+}
+
+void AdvancedPanel::RateModeSwitch::mouseDown (const juce::MouseEvent&)
+{
+    toggle();
+}
+
+void AdvancedPanel::RateModeSwitch::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    // An engraved two-way plate: the lit half is struck in gold.
+    const auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const float radius = r.getHeight() * 0.5f;
+    g.setColour (knobBody);
+    g.fillRoundedRectangle (r, radius);
+
+    const auto left = r.withWidth (r.getWidth() * 0.5f), right = left.withX (left.getRight());
+    const auto lit = synced ? right : left;
+    juce::Path pill;
+    pill.addRoundedRectangle (r.reduced (1.5f), radius - 1.5f);
+    g.saveState();
+    g.reduceClipRegion (pill);
+    g.setGradientFill (juce::ColourGradient (gold.brighter (0.25f), lit.getX(), lit.getY(), gold.darker (0.3f), lit.getX(), lit.getBottom(), false));
+    g.fillRect (lit);
+    g.restoreState();
+
+    g.setColour ((isMouseOver() ? gold : goldDim));
+    g.drawRoundedRectangle (r, radius, 1.0f);
+
+    g.setFont (juce::FontOptions (8.5f, juce::Font::bold));
+    g.setColour (synced ? text.withAlpha (0.5f) : knobBody);
+    g.drawText ("TIME", left, juce::Justification::centred, false);
+    g.setColour (synced ? knobBody : text.withAlpha (0.5f));
+    g.drawText ("SYNC", right, juce::Justification::centred, false);
+}
+
 AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
 {
     using namespace param;
@@ -95,6 +152,78 @@ AdvancedPanel::AdvancedPanel (juce::AudioProcessorValueTreeState& s) : state (s)
     addSection (3, "UNISON", { { unisonVoices, "Voices" }, { unisonDetune, "Detune" }, { unisonSpread, "Spread" } }, unisonOn);
     addSection (3, "GLIDE", { { glideTime, "Time" }, { glideMode, "When" }, { glideType, "Type" } }, glideOn);
     addSection (3, "PLAY", { { bendRange, "Bend" }, { modVibrato, "Mod Vib" }, { velToCutoff, "Vel > Cut" } });
+
+    // M10: TIME / SYNC over each LFO rate.
+    addRateSync (lfoRate, lfo1Sync, lfo1Note);
+    addRateSync (lfo2Rate, lfo2Sync, lfo2Note);
+}
+
+std::unique_ptr<juce::Slider> AdvancedPanel::makeKnob (const char* id, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>& attachment)
+{
+    auto* p = state.getParameter (id);
+    jassert (p != nullptr);
+    auto slider = std::make_unique<juce::Slider> (juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow);
+    slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, textBoxHeight);
+    slider->setPopupDisplayEnabled (false, false, nullptr);
+    // Set here, not only in the look-and-feel: a value box whose size never changes
+    // in resized() is never rebuilt, and would keep the default LAF's outline.
+    slider->setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    slider->setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    slider->setTooltip (p->getName (64));
+    addAndMakeVisible (*slider);
+    attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, *slider);
+    // Double-click resets to the parameter default.
+    slider->setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));
+    return slider;
+}
+
+void AdvancedPanel::addRateSync (const char* rateId, const char* syncId, const char* noteId)
+{
+    auto it = std::find_if (controls.begin(), controls.end(), [rateId] (const auto& c) { return c->paramId == rateId; });
+    jassert (it != controls.end() && (*it)->slider != nullptr);
+    auto* c = it->get();
+
+    c->noteId = noteId;
+    c->noteSlider = makeKnob (noteId, c->noteAttachment);
+    c->noteSlider->setAlpha (c->slider->getAlpha());
+    c->label.setVisible (false); // the toggle takes the label's place
+
+    auto* p = state.getParameter (syncId);
+    jassert (p != nullptr);
+    c->rateMode = std::make_unique<RateModeSwitch> (*p, [c] (bool synced)
+    {
+        c->slider->setVisible (! synced);
+        c->noteSlider->setVisible (synced);
+    });
+    addAndMakeVisible (*c->rateMode);
+}
+
+int AdvancedPanel::getNumControls() const
+{
+    int n = static_cast<int> (controls.size() + switches.size());
+    for (const auto& c : controls)
+        n += (c->noteSlider != nullptr ? 1 : 0) + (c->rateMode != nullptr ? 1 : 0);
+    return n;
+}
+
+AdvancedPanel::RateModeSwitch* AdvancedPanel::getRateMode (const juce::String& syncParamId) const
+{
+    for (const auto& c : controls)
+        if (c->rateMode != nullptr && c->rateMode->paramId == syncParamId)
+            return c->rateMode.get();
+    return nullptr;
+}
+
+juce::Slider* AdvancedPanel::getKnob (const juce::String& paramId) const
+{
+    for (const auto& c : controls)
+    {
+        if (c->paramId == paramId)
+            return c->slider.get();
+        if (c->noteId == paramId)
+            return c->noteSlider.get();
+    }
+    return nullptr;
 }
 
 AdvancedPanel::~AdvancedPanel() = default;
@@ -128,19 +257,7 @@ void AdvancedPanel::addSection (int row, const juce::String& title, std::initial
         }
         else
         {
-            c->slider = std::make_unique<juce::Slider> (juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow);
-            c->slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, textBoxHeight);
-            c->slider->setPopupDisplayEnabled (false, false, nullptr);
-            // Set here, not only in the look-and-feel: a value box whose size never changes
-            // in resized() is never rebuilt, and would keep the default LAF's outline.
-            c->slider->setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-            c->slider->setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
-            c->slider->setTooltip (p->getName (64));
-            addAndMakeVisible (*c->slider);
-            c->sliderAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, *c->slider);
-            // Double-click resets to the parameter default.
-            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
-                c->slider->setDoubleClickReturnValue (true, ranged->convertFrom0to1 (ranged->getDefaultValue()));
+            c->slider = makeKnob (id, c->sliderAttachment);
         }
 
         section.controls.push_back (c.get());
@@ -173,6 +290,8 @@ void AdvancedPanel::setSectionOn (int row, size_t index, bool on)
         c->label.setAlpha (a);
         if (c->slider != nullptr) c->slider->setAlpha (a);
         if (c->combo != nullptr)  c->combo->setAlpha (a);
+        if (c->noteSlider != nullptr) c->noteSlider->setAlpha (a);
+        if (c->rateMode != nullptr)   c->rateMode->setAlpha (on ? 1.0f : 0.6f);
     }
     repaint (section.bounds);
 }
@@ -253,13 +372,17 @@ void AdvancedPanel::resized()
             for (auto* c : s.controls)
             {
                 auto cell = inner.removeFromLeft (cw);
-                c->label.setBounds (cell.removeFromTop (labelHeight));
-                if (c->slider != nullptr)
-                {
-                    c->slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, juce::jmin (80, cell.getWidth() - 6), textBoxHeight);
-                    c->slider->setBounds (cell);
-                }
-                else
+                const auto labelArea = cell.removeFromTop (labelHeight);
+                c->label.setBounds (labelArea);
+                if (c->rateMode != nullptr)
+                    c->rateMode->setBounds (labelArea.withSizeKeepingCentre (juce::jmin (62, labelArea.getWidth() - 4), 13));
+                for (auto* knob : { c->slider.get(), c->noteSlider.get() })
+                    if (knob != nullptr)
+                    {
+                        knob->setTextBoxStyle (juce::Slider::TextBoxBelow, false, juce::jmin (80, cell.getWidth() - 6), textBoxHeight);
+                        knob->setBounds (cell);
+                    }
+                if (c->combo != nullptr)
                     c->combo->setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 6, 100), 26));
             }
         }

@@ -182,7 +182,7 @@ TEST_CASE ("Old codes, projects, stashes and vault notes load with every section
     const auto v3 = cash::CashCode::decode ("$74S0-6CJC-H200-001C-1KMR-02MY-ACF4-N73K-3H58-000B-5HG0-00AJ-0080-0004-100C-0000-T310", defaults);
     REQUIRE (v3.has_value());
     CHECK (cash::samePatch (*v3, defaults, 0.5f / 255.0f + 1.0e-6f));
-    CHECK (cash::CashCode::version == 4);
+    CHECK (cash::CashCode::version >= 4);
 
     // An M7 project (no switches anywhere), loaded into an instance with everything off.
     p.bankIt();
@@ -193,6 +193,11 @@ TEST_CASE ("Old codes, projects, stashes and vault notes load with every section
     auto root = juce::ValueTree::fromXml (*xml);
     auto params = root.getChildWithName ("PARAMS");
     for (auto* id : switches)
+    {
+        params.removeChild (params.getChildWithProperty ("id", id), nullptr);
+        root.getChildWithName ("Vault").getChild (0).getChildWithName ("Patch").removeProperty (id, nullptr);
+    }
+    for (auto* id : { cash::param::lfo1Sync, cash::param::lfo1Note, cash::param::lfo2Sync, cash::param::lfo2Note }) // M10 didn't exist either
     {
         params.removeChild (params.getChildWithProperty ("id", id), nullptr);
         root.getChildWithName ("Vault").getChild (0).getChildWithName ("Patch").removeProperty (id, nullptr);

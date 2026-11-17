@@ -42,7 +42,12 @@ void CashSynthAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
-    engine.render (buffer, midi);
+    const auto tempo = cash::tempo::fromPlayHead (getPlayHead()); // never typed in: always the host's
+    lastBpm.store (tempo.bpm);
+    lastSigNum.store (tempo.sigNum);
+    lastSigDen.store (tempo.sigDen);
+    lastPlaying.store (tempo.playing);
+    engine.render (buffer, midi, tempo);
     preview.mixInto (buffer, hostRate.load());
     scope.push (buffer);
 }
@@ -151,7 +156,24 @@ bool CashSynthAudioProcessor::depositMatch()
     const auto r = matcher.getResult();
     if (! r.found)
         return false;
-    setPatch (r.patch, "Cash Match: " + matcher.getTargetName() + " " + juce::String (r.percent) + "%");
+    // Matches are made in Hz. An LFO the user had in SYNC stays synced, on the note
+    // value nearest the matched rate at the current host tempo.
+    auto patch = r.patch;
+    const auto now = getPatch();
+    const auto tempo = getHostTempo();
+    for (auto [syncId, noteId, rateId] : { std::tuple { cash::param::lfo1Sync, cash::param::lfo1Note, cash::param::lfoRate },
+                                           std::tuple { cash::param::lfo2Sync, cash::param::lfo2Note, cash::param::lfo2Rate } })
+    {
+        const auto si = static_cast<size_t> (cash::ParameterMap::indexOf (syncId));
+        if (now[si] < 0.5f)
+            continue;
+        const auto ni = cash::ParameterMap::indexOf (noteId);
+        auto* rate = state.getParameter (rateId);
+        const double hz = rate->convertFrom0to1 (patch[static_cast<size_t> (cash::ParameterMap::indexOf (rateId))]);
+        patch[si] = 1.0f;
+        patch[static_cast<size_t> (ni)] = cash::ParameterMap::fromStep (cash::ParameterMap::spec (ni), cash::tempo::nearestNote (hz, tempo));
+    }
+    setPatch (patch, "Cash Match: " + matcher.getTargetName() + " " + juce::String (r.percent) + "%");
     return true;
 }
 

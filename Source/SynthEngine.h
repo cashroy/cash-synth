@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
 #include "SynthVoice.h"
+#include "Tempo.h"
 
 namespace cash
 {
@@ -22,7 +23,12 @@ public:
 
     void prepare (double sampleRate, int maxBlockSize);
     void reset();
-    void render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi);
+    // `tempo` = the host's BPM, time signature and song position at the block start
+    // (default: 120 BPM, 4/4, stopped). Synced LFO rates follow it; while it plays
+    // they lock their phase to the song position.
+    void render (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, const tempo::Info& tempo = {});
+
+    double getLfoPhase (int which) const { return (which == 0 ? lfo1 : lfo2).phase; } // 0..1, for tests
 
     int getNumActiveVoices() const;
     int getMonoNote() const { return monoGate ? monoNote : -1; } // sounding mono note, -1 if none
@@ -66,10 +72,12 @@ private:
     {
         double phase = 0.0;
         int wave = 0, prevWave = 0;
+        bool synced = false;
+        double lengthQn = 1.0;   // synced cycle length in quarter notes
         juce::SmoothedValue<float> rate { 1.0f }, gate { 1.0f }, fade { 1.0f };
         static float shape (int wave, double t);
     };
-    void fillLfo (Lfo&, std::vector<float>& out, int numSamples);
+    void fillLfo (Lfo&, std::vector<float>& out, int numSamples, int startSample);
 
     struct Raw
     {
@@ -89,6 +97,11 @@ private:
     Raw voiceMode, glideTime, glideMode, glideType, notePriority, unisonVoices, unisonDetune, unisonSpread;
     Raw bendRange, modVibrato, velToCutoff;
     Raw osc1On, osc2On, subNoiseOn, filterOn, filterEnvOn, driveOn, lfo1On, lfo2On, unisonOn, glideOn;
+    Raw lfo1Sync, lfo1Note, lfo2Sync, lfo2Note;
+
+    tempo::Info hostTempo;       // this block's
+    bool wasLocked = false;      // the song position was running last block
+    double expectedPpq = 0.0;    // where it should be now if nobody seeked
 
     std::array<juce::SmoothedValue<float>, numLanes> smooth;
     std::vector<float> laneData; // numLanes x chunk

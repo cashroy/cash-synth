@@ -61,7 +61,8 @@ set(CASH_SOURCES
     Source/MoneyTray.cpp
     Source/SoundPrint.cpp
     Source/CashMatch.cpp
-    Source/MatchPanel.cpp)
+    Source/MatchPanel.cpp
+    Source/Tempo.cpp)
 
 target_sources(CashSynth PRIVATE ${CASH_SOURCES})
 
@@ -104,7 +105,7 @@ if(CASH_BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
 
     enable_testing()
-    set(CASH_TEST_SOURCES Tests/ProcessorTests.cpp Tests/EngineTests.cpp Tests/CashTests.cpp Tests/UiTests.cpp Tests/StateTests.cpp Tests/MatchTests.cpp Tests/LeadTests.cpp Tests/AutomationTests.cpp Tests/MatchV2Tests.cpp)
+    set(CASH_TEST_SOURCES Tests/ProcessorTests.cpp Tests/EngineTests.cpp Tests/CashTests.cpp Tests/UiTests.cpp Tests/StateTests.cpp Tests/MatchTests.cpp Tests/LeadTests.cpp Tests/AutomationTests.cpp Tests/MatchV2Tests.cpp Tests/TempoTests.cpp)
     add_executable(CashSynthTests ${CASH_TEST_SOURCES})
     target_link_libraries(CashSynthTests PRIVATE CashSynth Catch2::Catch2WithMain)
     # Reuse the plugin's compiled JUCE code; only borrow its headers and module defines.

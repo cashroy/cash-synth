@@ -81,6 +81,13 @@ namespace cash::param
     inline constexpr const char* unisonOn    = "unisonOn";
     inline constexpr const char* glideOn     = "glideOn";
 
+    // M10: tempo sync for the LFO rates. Appended (CashCode v5); default TIME, so
+    // older codes, projects, stashes and vault notes play unsynced (in Hz) as before.
+    inline constexpr const char* lfo1Sync = "lfo1Sync"; // Time / Sync
+    inline constexpr const char* lfo1Note = "lfo1Note"; // note value (cash::tempo::noteNames)
+    inline constexpr const char* lfo2Sync = "lfo2Sync";
+    inline constexpr const char* lfo2Note = "lfo2Note";
+
     enum Wave { sine = 0, triangle, saw, square };
     enum FilterMode { lowPass = 0, bandPass, highPass };
     enum DriveType { softClip = 0, hardClip, fold };
@@ -89,6 +96,7 @@ namespace cash::param
     enum GlideMode { glideAlways = 0, glideLegato };
     enum GlideType { constantTime = 0, constantRate };
     enum NotePriority { lastNote = 0, lowNote, highNote };
+    enum RateMode { timeMode = 0, syncMode };
 
     inline constexpr float pitchEnvRange = 24.0f;      // semitones at 100 %
     inline constexpr float unisonDetuneRange = 1.0f;   // semitones between the outer unison voices at 100 %
@@ -104,6 +112,7 @@ namespace cash::param
     juce::StringArray glideModeNames();
     juce::StringArray glideTypeNames();
     juce::StringArray priorityNames();
+    juce::StringArray rateModeNames();
 
     juce::StringArray sectionSwitchIds(); // the M8 on/off params, in ParameterMap order
 

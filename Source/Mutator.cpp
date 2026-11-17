@@ -166,6 +166,17 @@ Patch Mutator::jackpot (const Patch& base, uint64_t seed, const LockMask& locks)
         }
     }
 
+    // M10: synced LFO rates now and then (the note value was rolled above). Own stream.
+    {
+        Rng sy (seed ^ 0x53594E43ull);
+        for (auto* id : { param::lfo1Sync, param::lfo2Sync })
+        {
+            const bool synced = sy.chance (0.15f);
+            if (isFree (locks, static_cast<int> (at (id))))
+                out[at (id)] = synced ? 1.0f : 0.0f;
+        }
+    }
+
     makePlayable (out, locks);
     return out;
 }

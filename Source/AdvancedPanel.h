@@ -33,9 +33,29 @@ public:
         bool on = true;
     };
 
-    // Knobs/menus plus the section switches: one control per parameter.
-    int getNumControls() const { return static_cast<int> (controls.size() + switches.size()); }
+    // M10: the TIME / SYNC toggle that sits over an LFO rate knob. In SYNC the
+    // rate knob gives way to a note-value knob (same place, value box reads "1/4 D").
+    class RateModeSwitch final : public juce::Component, public juce::SettableTooltipClient
+    {
+    public:
+        RateModeSwitch (juce::RangedAudioParameter&, std::function<void (bool)> onChange);
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        bool isSynced() const { return synced; }
+        void toggle(); // as if clicked (one host gesture)
+        const juce::String paramId;
+
+    private:
+        juce::ParameterAttachment attachment;
+        std::function<void (bool)> changed;
+        bool synced = false;
+    };
+
+    // Knobs/menus, section switches, rate-mode toggles and note knobs: one control per parameter.
+    int getNumControls() const;
     SectionSwitch* getSwitch (const juce::String& paramId) const;
+    RateModeSwitch* getRateMode (const juce::String& syncParamId) const;
+    juce::Slider* getKnob (const juce::String& paramId) const; // rate and note knobs included
     float getControlAlpha (const juce::String& paramId) const; // dimmed while its section is off
 
 private:
@@ -47,6 +67,12 @@ private:
         std::unique_ptr<juce::ComboBox> combo;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sliderAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> comboAttachment;
+
+        // M10, LFO rates only: SYNC swaps `slider` (Hz) for `noteSlider`.
+        juce::String noteId;
+        std::unique_ptr<juce::Slider> noteSlider;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noteAttachment;
+        std::unique_ptr<RateModeSwitch> rateMode;
     };
 
     struct Section
@@ -60,6 +86,8 @@ private:
     void addSection (int row, const juce::String& title, std::initializer_list<std::pair<const char*, const char*>> params,
                      const char* switchId = nullptr);
     void setSectionOn (int row, size_t index, bool on);
+    void addRateSync (const char* rateId, const char* syncId, const char* noteId);
+    std::unique_ptr<juce::Slider> makeKnob (const char* paramId, std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>&);
 
     juce::AudioProcessorValueTreeState& state;
     std::vector<std::unique_ptr<Control>> controls;

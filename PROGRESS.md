@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-Milestone 9 (Cash Match v2) **done**. Next: milestone 10 (polish, pluginval, README).
+Milestone 10 (tempo sync) **done**. Next: milestone 11 (delay + reverb).
 
 ## Toolchain (checked 2026-11-17)
 - Apple clang 17 (Command Line Tools only, no full Xcode), macOS SDK 26.1, CMake 4.5.0, 8 cores.
@@ -18,7 +18,9 @@ Milestone 9 (Cash Match v2) **done**. Next: milestone 10 (polish, pluginval, REA
 7. [x] Lead mode: mono/legato, glide, priority, unison, controllers
 8. [x] Section on/off toggles + automation-ready (smoothing, safe mode switches)
 9. [x] Cash Match v2: whole sample, per-part scores, section switches, parallel search
-10. [ ] Polish, pluginval, README
+10. [x] Tempo sync: LFO 1/2 rates as Hz or note values, following the host BPM automatically
+11. [ ] Delay + reverb (user, 2026-11-17), delay time syncable
+12. [ ] Polish, pluginval, README
 
 ## Key decisions
 - Build and test on this Mac (Intel, macOS 26.1); keep the Windows/VS2022 build supported.
@@ -136,6 +138,14 @@ Milestone 9 (Cash Match v2) **done**. Next: milestone 10 (polish, pluginval, REA
 - Cheque: amount box shorter, ITEMISED grid (6 parts, % + bar; n/a for pitch on unpitched), memo says how many sections were switched off; info line lists vibrato/tremolo/wah/pitch drop/stereo heard.
 - Results (tests): vibrato+3-voice unison+12 st drop lead 95 % (all parts >= 80); pluck 99 %; Karplus string 87 % (M6: 82 %); plain lead 100 % with 8 sections off.
 
+## Tempo sync (M10)
+- `Tempo.h/.cpp`: `tempo::Info` (bpm, sig, playing, ppq) from `AudioPlayHead` each block; no host / no BPM / nonsense = 120, 4/4, stopped. 24 note values, **slowest first** (knob only speeds up): 4 bars D ... 1/32 T. Bars follow the time signature, 1/2..1/32 don't. `noteHz`, `nearestNote` (in octaves).
+- 4 params appended (60 -> 64, `CashCode::version` 5, 71 chars): `lfo1Sync`/`lfo2Sync` (Choice Time/Sync, default Time), `lfo1Note`/`lfo2Note` (default 1/4). Weights 0.1 (sync) / 0.5 (note, ordered). `numParamsV4 = 60`; `isSectionSwitch` is now V3..V4 only.
+- Engine: `render (buffer, midi, tempo)`. SYNC rate = BPM/60/length through the existing 15 ms rate ramp. Playing + ppq = **locked**: phase = frac(ppq / length) (from song start, so time-signature changes mid-song aren't followed for bar values). Transport start or seek/loop (ppq off by > 0.001 qn from expected) snaps; note-value/mode changes glide onto the grid (~20 ms pull, exact once within 1e-4). Stopped = free-run at the synced rate. TIME path is byte-identical (golden renders pass).
+- Jackpot: each LFO synced with 15 % (own stream). Cash Match forces TIME on every candidate and doesn't polish sync/note; `depositMatch` keeps an LFO the user had in SYNC synced, on the note nearest the matched Hz at the current host tempo.
+- UI: `AdvancedPanel::RateModeSwitch` (TIME|SYNC gold plate) replaces the "Rate" label; SYNC swaps the Hz knob for a note knob in the same spot. Dims with its section.
+- Tests (`Tests/TempoTests.cpp`, 9 cases, fake play head): note Hz at 14 BPM/sig combos (4/4, 3/4, 7/8, 6/8, 5/4, 2/2), host defaults, free-run rate, lock from first sample at 6 BPM/sig/note combos + seek + stop, TIME ignores the song, note/mode/BPM change mid-note <= 2x steady step, v4 code/M9 project/stash load unsynced, jackpot rate, UI toggle.
+
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
 
@@ -148,8 +158,21 @@ M8 verified 2026-11-17: clean build (-Werror), 70 tests pass (~26 s), no JUCE as
 - Fixed: the `juce_Slider.cpp:1485` assertion was `RiskDial` passing a negative start angle to `setRotaryParameters` (JUCE wants both angles in [0, 4pi)); now 1.5pi..2.5pi, same dial.
 
 M9 verified 2026-11-17: clean build (-Werror), 78 tests pass (~41 s Debug), no JUCE assertions, `auval` PASS, cheque snapshot checked by eye.
+M10 verified 2026-11-17: clean build (-Werror), 87 tests pass (~24 s), no JUCE assertions, `auval` PASS, back snapshot checked by eye.
+
+## Plan: tempo sync + effects (asked 2026-11-17)
+- LFO part done in M10 (see above). M11: delay time and reverb pre-delay get the same TIME/SYNC switch and note list (`tempo::noteQuarters`).
+- Note values, the usual set: 4 bars, 2 bars, 1 bar, 1/2, 1/4, 1/8, 1/16, 1/32, each straight, dotted (x1.5) and triplet (x2/3). Shown as "1/4", "1/4 D", "1/4 T", "1 bar".
+- **BPM comes from the host automatically** (`AudioPlayHead::getPosition()` each block: BPM, time signature, PPQ, playing). Never typed in by the user. Standalone / no BPM: 120. Bar length follows the time signature.
+- While the host plays, synced LFOs lock their phase to the song position (PPQ), so they line up with the beat and stay in time after seeking; when stopped they free-run at the synced rate. A per-LFO retrigger (free / restart on note) is a candidate.
+- New params appended (stable IDs, `CashCode` version bump, older codes/projects decode with sync off = today's sound): `lfo1Sync`, `lfo1Note`, `lfo2Sync`, `lfo2Note` (M10); `delayOn`, `delayTimeMs`, `delaySync`, `delayNote`, `delayFeedback`, `delayMix`, `delayPingPong`, `delayTone`, `reverbOn`, `reverbSize`, `reverbDecay`, `reverbDamp`, `reverbPreDelay`, `reverbPreSync`, `reverbPreNote`, `reverbWidth`, `reverbMix` (M11, final list decided then).
+- Engine: a tempo context (BPM, sig, PPQ, playing) passed into `SynthEngine::render`; `PatchRenderer` (Cash Match) renders at 120 BPM with transport stopped. Rate smoothing stays click-free when the BPM or note value changes.
+- UI: a small TIME/SYNC toggle next to each rate knob; in SYNC the knob steps through the note values and its label reads the note. Effects get their own section(s) on the back of the bill (and on/off switches like M8).
+- Money moves: Jackpot/Invest may pick synced rates (low weight); effects mix kept modest by `makePlayable`. Cash Match: matches synced LFOs in Hz (converts back when the user wants sync), and leaves delay/reverb off unless the sample clearly has a tail/echo (decide in M11).
+- Tests: rate = BPM-derived Hz for each note value at several BPMs incl. odd time signatures; phase locked to PPQ; BPM change mid-note is smooth; old codes/projects load unsynced; delay echo lands at the synced time; reverb tail decays, mix 0 = dry, effects off = bit-identical to M9 renders (golden renders).
 
 ## Next
 - Try in Logic: Cash Match on real samples (long pads, stereo chorus, vibrato leads); check CPU while matching during playback.
 - Known limits: very fast pitch drops (< ~50 ms) aren't tracked (46 ms window); unison beating is a real level/brightness wobble so it costs some ENVELOPE/BRIGHTNESS.
-- Milestone 10: polish (flip animation, lock toggles per knob), pluginval, README.
+- Try in Logic: synced LFOs at a few tempos, start/stop/loop, odd time signatures.
+- Milestone 11: delay + reverb (see Plan above). Then 12: polish (flip animation, lock toggles per knob), pluginval, README.

@@ -66,6 +66,17 @@ public:
 
     const cash::ScopeBuffer& getScope() const { return scope; }
 
+    // M10: the host tempo the last block played at (120 BPM, 4/4 without a host).
+    cash::tempo::Info getHostTempo() const
+    {
+        cash::tempo::Info t;
+        t.bpm = lastBpm.load();
+        t.sigNum = lastSigNum.load();
+        t.sigDen = lastSigDen.load();
+        t.playing = lastPlaying.load();
+        return t;
+    }
+
     // Stash: named presets on disk (shared by every project).
     cash::Stash& getStash() { return stash; }
     juce::File stashIt (const juce::String& name);  // saves the current sound; {} on failure
@@ -100,6 +111,9 @@ private:
     juce::CriticalSection vaultLock; // getStateInformation may run off the message thread
     cash::PreviewPlayer preview;
     std::atomic<double> hostRate { 44100.0 };
+    std::atomic<double> lastBpm { cash::tempo::defaultBpm };
+    std::atomic<int> lastSigNum { 4 }, lastSigDen { 4 };
+    std::atomic<bool> lastPlaying { false };
     cash::CashMatcher matcher { state }; // after `state`: it borrows its parameter ranges
 
     void recordHandTweaks();

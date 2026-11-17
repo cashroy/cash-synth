@@ -84,6 +84,13 @@ const std::array<ParamSpec, ParameterMap::numParams>& ParameterMap::specs()
         { lfo2On,      2, false, 0.15f },
         { unisonOn,    2, false, 0.15f },
         { glideOn,     2, false, 0.15f },
+
+        // M10 (CashCode v5): tempo sync. Synced rates turn up now and then; the
+        // note value moves like any stepped knob (ordered: slowest to fastest).
+        { lfo1Sync, 2,  false, 0.1f },
+        { lfo1Note, 24, true,  0.5f },
+        { lfo2Sync, 2,  false, 0.1f },
+        { lfo2Note, 24, true,  0.5f },
     } };
     return table;
 }
@@ -95,13 +102,19 @@ bool isPerformanceParam (int index)
 
 bool isSectionSwitch (int index)
 {
-    return index >= ParameterMap::numParamsV3;
+    return index >= ParameterMap::numParamsV3 && index < ParameterMap::numParamsV4;
 }
 
 void allSectionsOn (Patch& p)
 {
-    for (int i = ParameterMap::numParamsV3; i < ParameterMap::numParams; ++i)
+    for (int i = ParameterMap::numParamsV3; i < ParameterMap::numParamsV4; ++i)
         p[static_cast<size_t> (i)] = 1.0f;
+}
+
+void unsync (Patch& p)
+{
+    for (auto* id : { param::lfo1Sync, param::lfo2Sync })
+        p[static_cast<size_t> (ParameterMap::indexOf (id))] = 0.0f;
 }
 
 int ParameterMap::indexOf (juce::StringRef id)

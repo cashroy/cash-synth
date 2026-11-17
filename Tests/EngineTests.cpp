@@ -90,7 +90,7 @@ TEST_CASE ("Parameter layout is complete and defaults are in range", "[params]")
 {
     Rig r;
     const auto& params = r.p.getParameters();
-    CHECK (params.size() == 60);
+    CHECK (params.size() == 64);
 
     for (auto* p : params)
     {
