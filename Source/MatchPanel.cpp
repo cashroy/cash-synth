@@ -425,7 +425,7 @@ void MatchPanel::paint (juce::Graphics& g)
     // Rubber stamp across the box.
     if (found || searching)
     {
-        const auto text = stampFor (percent, searching);
+        const auto stampText = stampFor (percent, searching);
         const auto col = stampColour (percent, searching).withAlpha (0.8f);
         juce::Graphics::ScopedSaveState save (g);
         g.addTransform (juce::AffineTransform::rotation (-0.18f, box.getCentreX(), box.getY() + 30.0f));
@@ -433,7 +433,7 @@ void MatchPanel::paint (juce::Graphics& g)
         g.setColour (col);
         g.drawRoundedRectangle (stamp, 4.0f, 2.5f);
         g.setFont (art::serif (18.0f, true, 0.2f));
-        g.drawText (text, stamp, juce::Justification::centred, false);
+        g.drawText (stampText, stamp, juce::Justification::centred, false);
     }
 
     paintParts (g);

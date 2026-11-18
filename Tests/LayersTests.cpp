@@ -246,7 +246,7 @@ TEST_CASE ("Fitting splits a sound into layers by envelope shape", "[layers][fit
         for (const auto& [k, v] : fit.values)
             if (juce::StringRef (k) == juce::StringRef (id))
                 return v;
-        FAIL ("missing " << id);
+        FAIL_CHECK ("missing " << id);
         return 0.0f;
     };
     // Loudest first: the sustained body, then the click (short decay, little sustain).
@@ -595,7 +595,7 @@ float fitValue (const L::Fit& fit, const char* id)
     for (const auto& [k, v] : fit.values)
         if (juce::StringRef (k) == juce::StringRef (id))
             return v;
-    FAIL ("missing " << id);
+    FAIL_CHECK ("missing " << id);
     return 0.0f;
 }
 

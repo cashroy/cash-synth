@@ -383,7 +383,7 @@ TEST_CASE ("Cash Match cheque opens from the stash bar", "[match][ui]")
     }
 
     // Snapshot of the cheque for the docs (hidden test writes it when asked).
-    if (const auto* path = std::getenv ("CASH_SNAPSHOT"))
+    if (const auto path = juce::SystemStats::getEnvironmentVariable ("CASH_SNAPSHOT", {}); path.isNotEmpty())
     {
         pl.p.getMatcher().runBlocking (pl.p.getPatch(), cash::defaultPatch (pl.p.getState()), 1, { 8, 2, 6, 0 });
         ed->getMatchPanel().sync();
@@ -391,7 +391,7 @@ TEST_CASE ("Cash Match cheque opens from the stash bar", "[match][ui]")
         juce::Graphics g (hi);
         g.addTransform (juce::AffineTransform::scale (2.0f));
         ed->paintEntireComponent (g, true);
-        auto file = juce::File (juce::String (path)).getSiblingFile ("editor-match.png");
+        auto file = juce::File (path).getSiblingFile ("editor-match.png");
         file.deleteFile();
         juce::FileOutputStream os (file);
         juce::PNGImageFormat().writeImageToStream (hi, os);

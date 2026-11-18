@@ -293,11 +293,18 @@ TEST_CASE ("Bill background: tinted public-domain scan, painted fallback", "[bil
     const auto serialSpot = scan.getPixelAt (150, 122);
     CHECK (serialSpot.getPerceivedBrightness() > 0.75f);
 
-    // Both painters draw without the scan's help.
-    juce::Image img (juce::Image::ARGB, 400, 175, true);
-    juce::Graphics g (img);
-    cash::art::paintFrontPainted (g, img.getBounds().toFloat());
-    CHECK (img.getPixelAt (200, 4).getAlpha() == 255);
-    cash::art::paintFront (g, img.getBounds().toFloat());
-    CHECK (img.getPixelAt (200, 4).getAlpha() == 255);
+    // Both painters draw without the scan's help. Each paints into a fresh image, and the
+    // Graphics goes out of scope before reading (Direct2D on Windows draws on flush).
+    for (const bool painted : { true, false })
+    {
+        juce::Image img (juce::Image::ARGB, 400, 175, true);
+        {
+            juce::Graphics g (img);
+            if (painted)
+                cash::art::paintFrontPainted (g, img.getBounds().toFloat());
+            else
+                cash::art::paintFront (g, img.getBounds().toFloat());
+        }
+        CHECK (img.getPixelAt (200, 4).getAlpha() == 255);
+    }
 }

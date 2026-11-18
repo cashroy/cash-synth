@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(CashSynth VERSION 0.1.0 LANGUAGES C CXX)
+project(CashSynth VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,8 @@ FetchContent_Declare(JUCE
 FetchContent_MakeAvailable(JUCE)
 
 # ---------------------------------------------------------------- plugin
+# Copy built plugins into the user plug-in folders (off for release/CI builds).
+option(CASH_COPY_PLUGINS "Copy plugins to the plug-in folders after building" ON)
 set(CASH_FORMATS VST3 Standalone)
 if(APPLE)
     list(APPEND CASH_FORMATS AU)
@@ -39,7 +41,7 @@ juce_add_plugin(CashSynth
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     AU_MAIN_TYPE                kAudioUnitType_MusicDevice
     VST3_CATEGORIES             Instrument Synth
-    COPY_PLUGIN_AFTER_BUILD     TRUE)
+    COPY_PLUGIN_AFTER_BUILD     ${CASH_COPY_PLUGINS})
 
 set(CASH_SOURCES
     Source/PluginProcessor.cpp
@@ -118,7 +120,13 @@ if(CASH_BUILD_TESTS)
     # Reuse the plugin's compiled JUCE code; only borrow its headers and module defines.
     target_include_directories(CashSynthTests PRIVATE $<TARGET_PROPERTY:CashSynth,INCLUDE_DIRECTORIES>)
     target_compile_definitions(CashSynthTests PRIVATE $<TARGET_PROPERTY:CashSynth,COMPILE_DEFINITIONS>)
-    set_source_files_properties(${CASH_TEST_SOURCES} PROPERTIES COMPILE_OPTIONS "${CASH_WARNINGS}")
+    # Tests keep file-level constants like `sampleRate`; MSVC would flag JUCE's own template
+    # parameters of that name (C4459) as hiding them.
+    set(CASH_TEST_WARNINGS ${CASH_WARNINGS})
+    if(MSVC)
+        list(APPEND CASH_TEST_WARNINGS /wd4459)
+    endif()
+    set_source_files_properties(${CASH_TEST_SOURCES} PROPERTIES COMPILE_OPTIONS "${CASH_TEST_WARNINGS}")
 
     list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
     include(Catch)
