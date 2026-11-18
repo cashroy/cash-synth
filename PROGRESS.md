@@ -213,6 +213,8 @@ M1-14 done (2026-11-18). v1.0.0 released from `main` with Mac + Windows installe
 - `.github/workflows/release.yml`: on a `v*` tag, macos-latest builds universal (arm64 + x86_64) VST3/AU/Standalone -> `packaging/mac/build_pkg.sh` -> `CashSynth-mac.pkg` (3 choices, ad-hoc signed bundles, unsigned pkg, AU postinstall restarts AudioComponentRegistrar); windows-2022 builds x64 VST3/Standalone + runs ctest (minus the big-model timing check) -> Inno Setup `packaging/windows/CashSynth.iss` -> `CashSynth-Setup.exe`; then publishes the GitHub Release with `packaging/release-notes.md`. Fixed file names so the website can link `releases/latest/download/...`.
 - Website `cashroy.github.io/cashsynth/`: Download for Windows / Download for Mac / All releases (Mac-first on Macs; "Coming soon" if no release), LAYERS feature + screenshot, installer setup steps.
 - Not signed/notarised (no Apple Developer ID / Windows code-signing cert): users get Gatekeeper / SmartScreen prompts.
+- Windows CI fixes: 3 MSVC /W4 warnings, `getenv` -> JUCE, `/wd4459` for tests (file-level `sampleRate`), no `return` after `FAIL`, Direct2D draws on Graphics flush (scope it before reading pixels).
+- **Open (2026-11-18)**: on Windows CI one run passed 123/124 tests in ~2 min, the next hung in the test step for 30+ min (unknown test). Tests are `continue-on-error` with a 300 s per-test timeout so the installer still ships: diagnose from that run's log.
 
 ## Open questions
 - Licence: JUCE 8 is AGPLv3 or commercial (free Starter tier), not permissive. Project code is MIT; a release route is undecided. Fine for personal use.
@@ -245,6 +247,7 @@ M14 part 2 verified 2026-11-18: clean build (-Werror), 125 tests pass (ctest -j4
 - Tests: rate = BPM-derived Hz for each note value at several BPMs incl. odd time signatures; phase locked to PPQ; BPM change mid-note is smooth; old codes/projects load unsynced; delay echo lands at the synced time; reverb tail decays, mix 0 = dry, effects off = bit-identical to M9 renders (golden renders).
 
 ## Next
+- Find the Windows test hang (see Release), then make the tests blocking again.
 - Install the released pkg/exe on a clean Mac and a Windows PC and check they show up in a DAW.
 - Signing: Apple Developer ID + notarisation, Windows code-signing, to remove the warnings.
 - Try LAYERS in Logic: Cash Match -> LAYERS, edit layers on the LAYERS page, automate a few layer knobs, check CPU with a 16-note chord.
